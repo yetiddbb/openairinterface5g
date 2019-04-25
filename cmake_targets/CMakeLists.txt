@@ -1366,33 +1366,39 @@ set(L2_SRC
   ${PDCP_DIR}/pdcp_util.c
   ${PDCP_DIR}/pdcp_security.c
   ${PDCP_DIR}/pdcp_netlink.c
-  ${RLC_AM_DIR}/rlc_am.c
-  ${RLC_AM_DIR}/rlc_am_init.c
-  ${RLC_AM_DIR}/rlc_am_timer_poll_retransmit.c
-  ${RLC_AM_DIR}/rlc_am_timer_reordering.c
-  ${RLC_AM_DIR}/rlc_am_timer_status_prohibit.c
-  ${RLC_AM_DIR}/rlc_am_segment.c
-  ${RLC_AM_DIR}/rlc_am_segments_holes.c
-  ${RLC_AM_DIR}/rlc_am_in_sdu.c
-  ${RLC_AM_DIR}/rlc_am_receiver.c
-  ${RLC_AM_DIR}/rlc_am_retransmit.c
-  ${RLC_AM_DIR}/rlc_am_windows.c
-  ${RLC_AM_DIR}/rlc_am_rx_list.c
-  ${RLC_AM_DIR}/rlc_am_reassembly.c
-  ${RLC_AM_DIR}/rlc_am_status_report.c
-  ${RLC_TM_DIR}/rlc_tm.c
-  ${RLC_TM_DIR}/rlc_tm_init.c
-  ${RLC_UM_DIR}/rlc_um.c
-  ${RLC_UM_DIR}/rlc_um_fsm.c
-  ${RLC_UM_DIR}/rlc_um_control_primitives.c
-  ${RLC_UM_DIR}/rlc_um_segment.c
-  ${RLC_UM_DIR}/rlc_um_reassembly.c
-  ${RLC_UM_DIR}/rlc_um_receiver.c
-  ${RLC_UM_DIR}/rlc_um_dar.c
-  ${RLC_DIR}/rlc_mac.c
-  ${RLC_DIR}/rlc.c
-  ${RLC_DIR}/rlc_rrc.c
-  ${RLC_DIR}/rlc_mpls.c
+  ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_glue.c
+  ${OPENAIR2_DIR}/LAYER2/rlc.new/asn1_utils.c
+  ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_ue_manager.c
+  ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_entity.c
+  ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_entity_am.c
+  ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_pdu.c
+#  ${RLC_AM_DIR}/rlc_am.c
+#  ${RLC_AM_DIR}/rlc_am_init.c
+#  ${RLC_AM_DIR}/rlc_am_timer_poll_retransmit.c
+#  ${RLC_AM_DIR}/rlc_am_timer_reordering.c
+#  ${RLC_AM_DIR}/rlc_am_timer_status_prohibit.c
+#  ${RLC_AM_DIR}/rlc_am_segment.c
+#  ${RLC_AM_DIR}/rlc_am_segments_holes.c
+#  ${RLC_AM_DIR}/rlc_am_in_sdu.c
+#  ${RLC_AM_DIR}/rlc_am_receiver.c
+#  ${RLC_AM_DIR}/rlc_am_retransmit.c
+#  ${RLC_AM_DIR}/rlc_am_windows.c
+#  ${RLC_AM_DIR}/rlc_am_rx_list.c
+#  ${RLC_AM_DIR}/rlc_am_reassembly.c
+#  ${RLC_AM_DIR}/rlc_am_status_report.c
+#  ${RLC_TM_DIR}/rlc_tm.c
+#  ${RLC_TM_DIR}/rlc_tm_init.c
+#  ${RLC_UM_DIR}/rlc_um.c
+#  ${RLC_UM_DIR}/rlc_um_fsm.c
+#  ${RLC_UM_DIR}/rlc_um_control_primitives.c
+#  ${RLC_UM_DIR}/rlc_um_segment.c
+#  ${RLC_UM_DIR}/rlc_um_reassembly.c
+#  ${RLC_UM_DIR}/rlc_um_receiver.c
+#  ${RLC_UM_DIR}/rlc_um_dar.c
+#  ${RLC_DIR}/rlc_mac.c
+#  ${RLC_DIR}/rlc.c
+#  ${RLC_DIR}/rlc_rrc.c
+#  ${RLC_DIR}/rlc_mpls.c
 #  ${RRC_DIR}/rrc_UE.c
   ${RRC_DIR}/rrc_eNB.c
   ${RRC_DIR}/rrc_eNB_S1AP.c
