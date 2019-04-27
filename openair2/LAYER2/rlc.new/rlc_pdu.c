@@ -138,3 +138,54 @@ void rlc_pdu_decoder_align(rlc_pdu_decoder_t *decoder)
     decoder->byte++;
   }
 }
+
+/**************************************************************************/
+/* PDU encoder                                                            */
+/**************************************************************************/
+
+void rlc_pdu_encoder_init(rlc_pdu_encoder_t *encoder, char *buffer, int size)
+{
+  encoder->byte = 0;
+  encoder->bit = 0;
+  encoder->buffer = buffer;
+  encoder->size = size;
+}
+
+static void put_bit(rlc_pdu_encoder_t *encoder, int bit)
+{
+  if (encoder->byte == encoder->size) {
+    printf("%s:%d:%s: fatal, buffer full\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  encoder->buffer[encoder->byte] <<= 1;
+  if (bit)
+    encoder->buffer[encoder->byte] |= 1;
+
+  encoder->bit++;
+  if (encoder->bit == 8) {
+    encoder->bit = 0;
+    encoder->byte++;
+  }
+}
+
+void rlc_pdu_encoder_put_bits(rlc_pdu_encoder_t *encoder, int value, int count)
+{
+  int i;
+  int x;
+
+  if (count > 31) {
+    printf("%s:%d:%s: fatal\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  x = 1 << (count - 1);
+  for (i = 0; i < count; i++, x >>= 1)
+    put_bit(encoder, value & x);
+}
+
+void rlc_pdu_encoder_align(rlc_pdu_encoder_t *encoder)
+{
+  while (encoder->bit)
+    put_bit(encoder, 0);
+}

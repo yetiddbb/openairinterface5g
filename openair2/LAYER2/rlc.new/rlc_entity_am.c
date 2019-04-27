@@ -20,6 +20,12 @@ static int sn_in_recv_window(void *_entity, int sn)
   return mod_sn < 512;
 }
 
+static int sn_compare(void *_entity, int a, int b)
+{
+  rlc_entity_am_t *entity = _entity;
+  return modulus(entity, a) - modulus(entity, b);
+}
+
 static int segment_already_received(rlc_entity_am_t *entity,
     int sn, int so, int data_size)
 {
@@ -143,9 +149,9 @@ static void rlc_am_reassemble(rlc_entity_am_t *entity)
        * or if 'fi' & 1 == 0
        */
       if (r->data_pos != r->start->s->size || (r->fi & 1) == 0) {
-        printf("TODO: deliver SDU (len %d)", r->sdu_pos);
-        for (int i = 0; i < r->sdu_pos; i++) printf(" %2.2x", (unsigned char)r->sdu[i]);
-        printf("\n");
+        entity->common.deliver_sdu(entity->common.deliver_sdu_data,
+                                   (rlc_entity_t *)entity,
+                                   r->sdu, r->sdu_pos);
         r->sdu_pos = 0;
       }
       if (r->data_pos != r->start->s->size) {
@@ -162,6 +168,7 @@ static void rlc_am_reassemble(rlc_entity_am_t *entity)
          */
         do {
           rlc_pdu_segment_list_t *e = r->start;
+          entity->rx_size -= e->s->size;
           r->start = r->start->next;
           rlc_free_pdu_segment(e->s);
           free(e);
@@ -219,13 +226,21 @@ static void rlc_am_reception_actions(rlc_entity_am_t *entity,
 
   rlc_am_reassemble(entity);
 
-  printf("end of rlc_am_reception_actions: vr(h) %d vr(ms) %d vr(r) %d\n", entity->vr_h, entity->vr_ms, entity->vr_r);
-}
+  if (entity->t_reordering_start) {
+    int vr_x = entity->vr_x;
+    if (vr_x < entity->vr_r) vr_x += 1024;
+    if (vr_x == entity->vr_r || vr_x > entity->vr_r + 512)
+      entity->t_reordering_start = 0;
+  }
 
-static int sn_compare(void *_entity, int a, int b)
-{
-  rlc_entity_am_t *entity = _entity;
-  return modulus(entity, a) - modulus(entity, b);
+  if (entity->t_reordering_start == 0) {
+    if (sn_compare(entity, entity->vr_h, entity->vr_r) > 0) {
+      entity->t_reordering_start = entity->common.t_current;
+      entity->vr_x = entity->vr_h;
+    }
+  }
+
+  printf("end of rlc_am_reception_actions: vr(h) %d vr(ms) %d vr(r) %d\n", entity->vr_h, entity->vr_ms, entity->vr_r);
 }
 
 void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
@@ -238,7 +253,7 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
   int dc;
   int rf;
   int i;
-  int p;
+  int p = 0;
   int fi;
   int e;
   int sn;
@@ -259,13 +274,6 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
   for (i = 0; i < size; i++) printf("%2.2x ", (unsigned char)buffer[i]);
   printf("\n");
 
-  /* dicard PDU if rx buffer is full */
-  if (entity->rx_size + size > entity->rx_maxsize) {
-    printf("%s:%d:%s: warning: discard PDU, RX buffer full\n",
-           __FILE__, __LINE__, __FUNCTION__);
-    return;
-  }
-
   rlc_pdu_decoder_init(&decoder, buffer, size);
   dc = rlc_pdu_decoder_get_bits(&decoder, 1); R;
   if (dc == 0) goto control;
@@ -277,11 +285,18 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
   e  = rlc_pdu_decoder_get_bits(&decoder, 1); R;
   sn = rlc_pdu_decoder_get_bits(&decoder, 10); R;
 
+  /* dicard PDU if rx buffer is full */
+  if (entity->rx_size + size > entity->rx_maxsize) {
+    printf("%s:%d:%s: warning: discard PDU, RX buffer full\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    goto discard;
+  }
+
   if (!sn_in_recv_window(entity, sn)) {
     printf("%s:%d:%s: warning: discard PDU, sn out of window (sn %d vr_r %d)\n",
            __FILE__, __LINE__, __FUNCTION__,
            sn, entity->vr_r);
-    return;
+    goto discard;
   }
 
   if (rf) {
@@ -304,7 +319,7 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
     if (data_li == 0) {
       printf("%s:%d:%s: warning: discard PDU, li == 0\n",
              __FILE__, __LINE__, __FUNCTION__);
-      return;
+      goto discard;
     }
     indicated_data_size += data_li;
     packet_count++;
@@ -318,20 +333,20 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
     printf("%s:%d:%s: warning: discard PDU, wrong data size (%d data size %d)\n",
            __FILE__, __LINE__, __FUNCTION__,
            indicated_data_size, data_size);
-    return;
+    goto discard;
   }
   if (indicated_data_size >= data_size) {
     printf("%s:%d:%s: warning: discard PDU, bad LIs (sum of LI %d data size %d)\n",
            __FILE__, __LINE__, __FUNCTION__,
            indicated_data_size, data_size);
-    return;
+    goto discard;
   }
 
   /* discard segment if all the bytes of the segment are already there */
   if (segment_already_received(entity, sn, so, data_size)) {
     printf("%s:%d:%s: warning: discard PDU, already received\n",
            __FILE__, __LINE__, __FUNCTION__);
-    return;
+    goto discard;
   }
 
   char *fi_str[] = {
@@ -353,6 +368,20 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
   /* do reception actions (36.322 5.1.3.2.3) */
   rlc_am_reception_actions(entity, pdu_segment);
 
+  if (p) {
+    /* 36.322 5.2.3 says status triggering should be delayed
+     * until x < VR(MS) or x >= VR(MR). This is not clear (what
+     * is x then? we keep the same?). So let's trigger no matter what.
+     */
+    int vr_mr = (entity->vr_r + 512) % 1024;
+    entity->status_triggered = 1;
+    if (!(sn_compare(entity, sn, entity->vr_ms) < 0 ||
+          sn_compare(entity, sn, vr_mr) >= 0)) {
+      printf("%s:%d:%s: warning: STATUS trigger should be delayed, according to specs\n",
+             __FILE__, __LINE__, __FUNCTION__);
+    }
+  }
+
   return;
 
 control:
@@ -361,5 +390,142 @@ control:
 
 err:
   printf("%s:%d:%s: error decoding PDU, discarding\n", __FILE__, __LINE__, __FUNCTION__);
+  goto discard;
+
+discard:
+  if (p)
+    entity->status_triggered = 1;
+
 #undef R
+}
+
+static int rlc_entity_am_status_size(rlc_entity_am_t *entity, int maxsize)
+{
+  /* let's count bits */
+  int bits = 15;               /* minimum size is 15 (header+ack_sn+e1) */
+  int sn;
+
+  maxsize *= 8;
+
+  if (bits > maxsize) {
+    printf("%s:%d:%s: warning: cannot generate status PDU, not enough room\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    return 0;
+  }
+
+  /* each NACK adds 12 bits */
+  sn = entity->vr_r;
+  while (bits + 12 <= maxsize && sn_compare(entity, sn, entity->vr_ms) < 0) {
+    if (!(rlc_am_segment_full(entity, sn)))
+      bits += 12;
+    sn = (sn + 1) % 1024;
+  }
+
+  return (bits + 7) / 8;
+}
+
+static int rlc_entity_am_send_status(rlc_entity_am_t *entity, char *buffer, int size)
+{
+  /* let's count bits */
+  int bits = 15;               /* minimum size is 15 (header+ack_sn+e1) */
+  int sn;
+  rlc_pdu_encoder_t encoder;
+  int has_nack = 0;
+  int ack;
+
+  rlc_pdu_encoder_init(&encoder, buffer, size);
+
+  size *= 8;
+
+  if (bits > size) {
+    printf("%s:%d:%s: warning: cannot generate status PDU, not enough room\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    return 0;
+  }
+
+  /* header */
+  rlc_pdu_encoder_put_bits(&encoder, 0, 1);   /* D/C */
+  rlc_pdu_encoder_put_bits(&encoder, 0, 3);   /* CPT */
+
+  /* reserve room for ACK (it will be set after putting the NACKs) */
+  rlc_pdu_encoder_put_bits(&encoder, 0, 10);
+
+  /* at this point, ACK is VR(R) */
+  ack = entity->vr_r;
+
+  /* each NACK adds 12 bits */
+  sn = entity->vr_r;
+  while (bits + 12 <= size && sn_compare(entity, sn, entity->vr_ms) < 0) {
+    if (!(rlc_am_segment_full(entity, sn))) {
+      /* put previous e1 (is 1) */
+      rlc_pdu_encoder_put_bits(&encoder, 1, 1);
+      /* if previous was NACK, put previous e2 (0, we don't do 'so' thing) */
+      if (has_nack)
+        rlc_pdu_encoder_put_bits(&encoder, 0, 1);
+      /* put NACKed sn */
+      rlc_pdu_encoder_put_bits(&encoder, sn, 10);
+      has_nack = 1;
+      bits += 12;
+    } else {
+      /* this sn is full and we put all NACKs before it, use it for ACK */
+      ack = (sn + 1) % 1024;
+    }
+    sn = (sn + 1) % 1024;
+  }
+
+  /* go to highest full sn+1 for ACK, VR(MS) is the limit */
+  while (sn_compare(entity, ack, entity->vr_ms) < 0 &&
+         rlc_am_segment_full(entity, ack)) {
+    ack = (ack + 1) % 1024;
+  }
+
+  /* at this point, if last put was NACK then put 2 bits else put 1 bit */
+  if (has_nack)
+    rlc_pdu_encoder_put_bits(&encoder, 0, 2);
+  else
+    rlc_pdu_encoder_put_bits(&encoder, 0, 1);
+
+  rlc_pdu_encoder_align(&encoder);
+
+  /* let's put the ACK */
+  buffer[0] |= ack >> 6;
+  buffer[1] |= (ack & 0x3f) << 2;
+
+  /* reset the trigger */
+  entity->status_triggered = 0;
+
+  /* start t_status_prohibit */
+  entity->t_status_prohibit_start = entity->common.t_current;
+
+  printf("ack is %d, buffer: ", ack);
+  for (int i = 0; i < encoder.byte; i++) printf(" %2.2x", buffer[i]);
+  printf("\n");
+
+  return encoder.byte;
+}
+
+static int rlc_am_status_to_report(rlc_entity_am_t *entity)
+{
+  return entity->status_triggered &&
+         (entity->common.t_current - entity->t_status_prohibit_start > entity->t_status_prohibit);
+}
+
+int rlc_entity_am_send_size(rlc_entity_t *_entity, int maxsize)
+{
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
+
+  if (rlc_am_status_to_report(entity))
+    return rlc_entity_am_status_size(entity, maxsize);
+
+  return 0;
+}
+
+int rlc_entity_am_send(rlc_entity_t *_entity, char *buffer, int size)
+{
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
+
+  if (rlc_am_status_to_report(entity))
+    return rlc_entity_am_send_status(entity, buffer, size);
+
+  return 0;
 }

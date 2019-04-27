@@ -7,6 +7,9 @@
 
 rlc_entity_t *new_rlc_entity_am(
     int rx_maxsize,
+    void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
+                      char *buf, int size),
+    void *deliver_sdu_data,
     int t_reordering,
     int t_status_prohibit,
     int t_poll_retransmit,
@@ -22,7 +25,12 @@ rlc_entity_t *new_rlc_entity_am(
     exit(1);
   }
 
-  ret->common.recv = rlc_entity_am_recv;
+  ret->common.recv      = rlc_entity_am_recv;
+  ret->common.send_size = rlc_entity_am_send_size;
+  ret->common.send      = rlc_entity_am_send;
+
+  ret->common.deliver_sdu      = deliver_sdu;
+  ret->common.deliver_sdu_data = deliver_sdu_data;
 
   ret->rx_maxsize         = rx_maxsize;
   ret->t_reordering       = t_reordering;

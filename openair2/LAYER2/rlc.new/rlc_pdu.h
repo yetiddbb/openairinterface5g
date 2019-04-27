@@ -49,4 +49,21 @@ int rlc_pdu_decoder_get_bits(rlc_pdu_decoder_t *decoder, int count);
 
 void rlc_pdu_decoder_align(rlc_pdu_decoder_t *decoder);
 
+/**************************************************************************/
+/* PDU encoder                                                            */
+/**************************************************************************/
+
+typedef struct {
+  int byte;           /* next byte to encode */
+  int bit;            /* next bit in next byte to encode */
+  char *buffer;
+  int size;
+} rlc_pdu_encoder_t;
+
+void rlc_pdu_encoder_init(rlc_pdu_encoder_t *encoder, char *buffer, int size);
+
+void rlc_pdu_encoder_put_bits(rlc_pdu_encoder_t *encoder, int value, int count);
+
+void rlc_pdu_encoder_align(rlc_pdu_encoder_t *encoder);
+
 #endif /* _RLC_PDU_H_ */

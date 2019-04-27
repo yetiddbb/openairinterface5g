@@ -1,7 +1,13 @@
+/* from openair */
 #include "rlc.h"
+#include "pdcp.h"
+
+/* from new rlc module */
 #include "asn1_utils.h"
 #include "rlc_ue_manager.h"
 #include "rlc_entity.h"
+
+#include <stdint.h>
 
 /* remove include/defines */
 #include <stdio.h>
@@ -9,6 +15,11 @@
 #define RESET "\x1b[m"
 
 static rlc_ue_manager_t *rlc_ue_manager;
+
+/* TODO: handle time a bit more properly */
+static uint64_t rlc_current_time;
+static int      rlc_current_time_last_frame;
+static int      rlc_current_time_last_subframe;
 
 void mac_rlc_data_ind     (
   const module_id_t         module_idP,
@@ -30,11 +41,18 @@ void mac_rlc_data_ind     (
     exit(1);
   }
 
-  if (channel_idP != 1) { printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__); exit(1); }
-
   rlc_manager_lock(rlc_ue_manager);
   ue = rlc_manager_get_ue(rlc_ue_manager, rntiP);
-  ue->srb[0]->recv(ue->srb[0], buffer_pP, tb_sizeP);
+
+  switch (channel_idP) {
+  case 1:
+    ue->srb[0]->t_current = rlc_current_time;
+    ue->srb[0]->recv(ue->srb[0], buffer_pP, tb_sizeP);
+    break;
+  default:
+    printf("%s:%d:%s: todo (channel ID %d)\n", __FILE__, __LINE__, __FUNCTION__, channel_idP); exit(1);
+  }
+
   rlc_manager_unlock(rlc_ue_manager);
 }
 
@@ -54,7 +72,30 @@ tbs_size_t mac_rlc_data_req(
 #endif
    )
 {
-  printf(RED "%s" RESET "\n", __FUNCTION__); return 0;
+  int ret;
+  rlc_ue_t *ue;
+  rlc_entity_t *rb;
+
+  rlc_manager_lock(rlc_ue_manager);
+  ue = rlc_manager_get_ue(rlc_ue_manager, rntiP);
+
+  switch (channel_idP) {
+  case 1 ... 2: rb = ue->srb[channel_idP - 1]; break;
+  case 3 ... 7: rb = ue->drb[channel_idP - 3]; break;
+  default:      rb = NULL;                     break;
+  }
+
+  rb->t_current = rlc_current_time;
+
+  if (rb != NULL)
+    ret = rb->send(rb, buffer_pP, ue->saved_status_ind_tb_size[channel_idP - 1]);
+  else
+    ret = 0;
+
+  rlc_manager_unlock(rlc_ue_manager);
+
+  printf(RED "%s (%d bytes)" RESET "\n", __FUNCTION__, ret);
+  return ret;
 }
 
 mac_rlc_status_resp_t mac_rlc_status_ind(
@@ -73,13 +114,43 @@ mac_rlc_status_resp_t mac_rlc_status_ind(
 #endif
   )
 {
+  rlc_ue_t *ue;
   mac_rlc_status_resp_t ret;
-  ret.bytes_in_buffer = 0;
+  rlc_entity_t *rb;
+
+  /* TODO: handle time a bit more properly */
+  if (rlc_current_time_last_frame != frameP ||
+      rlc_current_time_last_subframe != subframeP) {
+    rlc_current_time++;
+    rlc_current_time_last_frame = frameP;
+    rlc_current_time_last_subframe = subframeP;
+  }
+
+  rlc_manager_lock(rlc_ue_manager);
+  ue = rlc_manager_get_ue(rlc_ue_manager, rntiP);
+
+  switch (channel_idP) {
+  case 1 ... 2: rb = ue->srb[channel_idP - 1]; break;
+  case 3 ... 7: rb = ue->drb[channel_idP - 3]; break;
+  default:      rb = NULL;                     break;
+  }
+
+  if (rb != NULL) {
+    rb->t_current = rlc_current_time;
+    ret.bytes_in_buffer = rb->send_size(rb, tb_sizeP ? tb_sizeP : 1000000);
+    ue->saved_status_ind_tb_size[channel_idP - 1] = tb_sizeP;
+  } else {
+    ret.bytes_in_buffer = 0;
+  }
+
+  rlc_manager_unlock(rlc_ue_manager);
+
   ret.pdus_in_buffer = 0;
+  /* TODO: creation time may be important (unit: frame, as it seems) */
   ret.head_sdu_creation_time = 0;
   ret.head_sdu_remaining_size_to_send = 0;
   ret.head_sdu_is_segmented = 0;
-  printf(RED "%s" RESET "\n", __FUNCTION__);
+  printf(RED "%s %d.%d (%d bytes)" RESET "\n", __FUNCTION__, frameP, subframeP, ret.bytes_in_buffer);
   return ret;
 }
 
@@ -126,6 +197,57 @@ int rlc_module_init(void)
 void rlc_util_print_hex_octets(comp_name_t componentP, unsigned char *dataP, const signed long sizeP)
 {
   printf(RED "%s" RESET "\n", __FUNCTION__);
+}
+
+static void deliver_sdu(void *_ue, rlc_entity_t *entity, char *buf, int size)
+{
+  rlc_ue_t *ue = _ue;
+  int is_srb;
+  int rb_id;
+  protocol_ctxt_t ctx;
+  mem_block_t *memblock;
+
+  if (entity == ue->srb[0]) {
+    is_srb = 1;
+    rb_id = 1;
+  } else
+  if (entity == ue->srb[1]) {
+    is_srb = 1;
+    rb_id = 2;
+  } else {
+    printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  printf("%s:%d:%s: delivering SDU (rnti %d is_srb %d rb_id %d) size %d [",
+         __FILE__, __LINE__, __FUNCTION__, ue->rnti, is_srb, rb_id, size);
+  for (int i = 0; i < size; i++) printf(" %2.2x", (unsigned char)buf[i]);
+  printf("]\n");
+
+  memblock = get_free_mem_block(size, __func__);
+  if (memblock == NULL) {
+    printf("%s:%d:%s: ERROR: get_free_mem_block failed\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+  memcpy(memblock->data, buf, size);
+
+  /* unused fields? */
+  ctx.instance = 0;
+  ctx.frame = 0;
+  ctx.subframe = 0;
+  ctx.eNB_index = 0;
+  ctx.configured = 1;
+  ctx.brOption = 0;
+
+  /* used fields? */
+  ctx.module_id = 0;
+  ctx.rnti = ue->rnti;
+  ctx.enb_flag = 1;
+
+  if (!pdcp_data_ind(&ctx, is_srb, 0, rb_id, size, memblock)) {
+    printf("%s:%d:%s: ERROR: pdcp_data_ind failed\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
 }
 
 static void add_srb(int rnti, struct LTE_SRB_ToAddMod *s)
@@ -195,10 +317,12 @@ static void add_srb(int rnti, struct LTE_SRB_ToAddMod *s)
     exit(1);
   }
 
-  rlc_am = new_rlc_entity_am(t_reordering, t_status_prohibit, t_poll_retransmit,
-                             poll_pdu, poll_byte, max_retx_threshold);
   rlc_manager_lock(rlc_ue_manager);
   ue = rlc_manager_get_ue(rlc_ue_manager, rnti);
+  rlc_am = new_rlc_entity_am(100000,
+                             deliver_sdu, ue,
+                             t_reordering, t_status_prohibit, t_poll_retransmit,
+                             poll_pdu, poll_byte, max_retx_threshold);
   rlc_ue_add_srb_rlc_entity(ue, srb_id, rlc_am);
   rlc_manager_unlock(rlc_ue_manager);
 }

@@ -214,8 +214,11 @@ typedef struct {
   int vr_ms;
   int vr_h;
 
+  int status_triggered;
+
   /* timers (stores the TTI of activation, 0 means not active) */
   uint64_t t_reordering_start;
+  uint64_t t_status_prohibit_start;
 
   /* rx management */
   rlc_pdu_segment_list_t *rx_list;
@@ -227,5 +230,7 @@ typedef struct {
 } rlc_entity_am_t;
 
 void rlc_entity_am_recv(rlc_entity_t *entity, char *buffer, int size);
+int rlc_entity_am_send_size(rlc_entity_t *entity, int maxsize);
+int rlc_entity_am_send(struct rlc_entity_t *entity, char *buffer, int size);
 
 #endif /* _RLC_ENTITY_AM_H_ */
