@@ -17,10 +17,10 @@ int main(void)
 
   rlc_entity_t *am;
 
-  am = new_rlc_entity_am(100000, deliver_sdu, (void*)0, 35, 0, 45, -1, -1, 4);
+  am = new_rlc_entity_am(100000, 100000, deliver_sdu, (void*)0, 35, 0, 45, -1, -1, 4);
 
-  am->recv(am, x, sizeof(x));
-  am->recv(am, y, sizeof(y));
+  am->recv_pdu(am, x, sizeof(x));
+  am->recv_pdu(am, y, sizeof(y));
 
   return 0;
 }

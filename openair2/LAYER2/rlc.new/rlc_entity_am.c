@@ -4,9 +4,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static int modulus(rlc_entity_am_t *entity, int a)
+/*************************************************************************/
+/* RX functions                                                          */
+/*************************************************************************/
+
+static int modulus_rx(rlc_entity_am_t *entity, int a)
 {
-  /* as per 36.322 7.1, modulus base is vr(r) and modulus is 1024 */
+  /* as per 36.322 7.1, modulus base is vr(r) and modulus is 1024 for rx */
   int r = a - entity->vr_r;
   if (r < 0) r += 1024;
   return r;
@@ -15,15 +19,15 @@ static int modulus(rlc_entity_am_t *entity, int a)
 static int sn_in_recv_window(void *_entity, int sn)
 {
   rlc_entity_am_t *entity = _entity;
-  int mod_sn = modulus(entity, sn);
+  int mod_sn = modulus_rx(entity, sn);
   /* we simplify vr(r)<=sn<vr(mr). base is vr(r) and vr(mr) = vr(r) + 512 */
   return mod_sn < 512;
 }
 
-static int sn_compare(void *_entity, int a, int b)
+static int sn_compare_rx(void *_entity, int a, int b)
 {
   rlc_entity_am_t *entity = _entity;
-  return modulus(entity, a) - modulus(entity, b);
+  return modulus_rx(entity, a) - modulus_rx(entity, b);
 }
 
 static int segment_already_received(rlc_entity_am_t *entity,
@@ -149,6 +153,7 @@ static void rlc_am_reassemble(rlc_entity_am_t *entity)
        * or if 'fi' & 1 == 0
        */
       if (r->data_pos != r->start->s->size || (r->fi & 1) == 0) {
+        /* SDU is full - deliver to higher layer */
         entity->common.deliver_sdu(entity->common.deliver_sdu_data,
                                    (rlc_entity_t *)entity,
                                    r->sdu, r->sdu_pos);
@@ -187,7 +192,7 @@ static void rlc_am_reception_actions(rlc_entity_am_t *entity,
 
   printf("begin of rlc_am_reception_actions: x %d vr(h) %d vr(ms) %d vr(r) %d\n", x, entity->vr_h, entity->vr_ms, entity->vr_r);
 
-  if (modulus(entity, x) >= modulus(entity, entity->vr_h))
+  if (modulus_rx(entity, x) >= modulus_rx(entity, entity->vr_h))
     entity->vr_h = (x + 1) % 1024;
 
   vr_ms = entity->vr_ms;
@@ -234,7 +239,7 @@ static void rlc_am_reception_actions(rlc_entity_am_t *entity,
   }
 
   if (entity->t_reordering_start == 0) {
-    if (sn_compare(entity, entity->vr_h, entity->vr_r) > 0) {
+    if (sn_compare_rx(entity, entity->vr_h, entity->vr_r) > 0) {
       entity->t_reordering_start = entity->common.t_current;
       entity->vr_x = entity->vr_h;
     }
@@ -243,7 +248,7 @@ static void rlc_am_reception_actions(rlc_entity_am_t *entity,
   printf("end of rlc_am_reception_actions: vr(h) %d vr(ms) %d vr(r) %d\n", entity->vr_h, entity->vr_ms, entity->vr_r);
 }
 
-void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
+void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
 {
 #define R do { if (rlc_pdu_decoder_in_error(&decoder)) goto err; } while (0)
   rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
@@ -362,7 +367,7 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
   /* put in pdu reception list */
   entity->rx_size += size;
   pdu_segment = rlc_new_pdu_segment(sn, so, size, lsf, buffer, data_start);
-  entity->rx_list = rlc_pdu_segment_list_add(sn_compare, entity,
+  entity->rx_list = rlc_pdu_segment_list_add(sn_compare_rx, entity,
                                              entity->rx_list, pdu_segment);
 
   /* do reception actions (36.322 5.1.3.2.3) */
@@ -375,8 +380,8 @@ void rlc_entity_am_recv(rlc_entity_t *_entity, char *buffer, int size)
      */
     int vr_mr = (entity->vr_r + 512) % 1024;
     entity->status_triggered = 1;
-    if (!(sn_compare(entity, sn, entity->vr_ms) < 0 ||
-          sn_compare(entity, sn, vr_mr) >= 0)) {
+    if (!(sn_compare_rx(entity, sn, entity->vr_ms) < 0 ||
+          sn_compare_rx(entity, sn, vr_mr) >= 0)) {
       printf("%s:%d:%s: warning: STATUS trigger should be delayed, according to specs\n",
              __FILE__, __LINE__, __FUNCTION__);
     }
@@ -399,7 +404,32 @@ discard:
 #undef R
 }
 
-static int rlc_entity_am_status_size(rlc_entity_am_t *entity, int maxsize)
+/*************************************************************************/
+/* TX functions                                                          */
+/*************************************************************************/
+
+static int modulus_tx(rlc_entity_am_t *entity, int a)
+{
+  /* as per 36.322 7.1, modulus base is vt(a) and modulus is 1024 for tx */
+  int r = a - entity->vt_a;
+  if (r < 0) r += 1024;
+  return r;
+}
+
+static int sn_compare_tx(void *_entity, int a, int b)
+{
+  rlc_entity_am_t *entity = _entity;
+  return modulus_tx(entity, a) - modulus_tx(entity, b);
+}
+
+static int header_size(int sdu_count)
+{
+  int bits = 16 + 12 * (sdu_count-1);
+  /* padding if we have to */
+  return (bits + 7) / 8;
+}
+
+static int status_size(rlc_entity_am_t *entity, int maxsize)
 {
   /* let's count bits */
   int bits = 15;               /* minimum size is 15 (header+ack_sn+e1) */
@@ -415,7 +445,7 @@ static int rlc_entity_am_status_size(rlc_entity_am_t *entity, int maxsize)
 
   /* each NACK adds 12 bits */
   sn = entity->vr_r;
-  while (bits + 12 <= maxsize && sn_compare(entity, sn, entity->vr_ms) < 0) {
+  while (bits + 12 <= maxsize && sn_compare_rx(entity, sn, entity->vr_ms) < 0) {
     if (!(rlc_am_segment_full(entity, sn)))
       bits += 12;
     sn = (sn + 1) % 1024;
@@ -424,7 +454,7 @@ static int rlc_entity_am_status_size(rlc_entity_am_t *entity, int maxsize)
   return (bits + 7) / 8;
 }
 
-static int rlc_entity_am_send_status(rlc_entity_am_t *entity, char *buffer, int size)
+static int generate_status(rlc_entity_am_t *entity, char *buffer, int size)
 {
   /* let's count bits */
   int bits = 15;               /* minimum size is 15 (header+ack_sn+e1) */
@@ -455,7 +485,7 @@ static int rlc_entity_am_send_status(rlc_entity_am_t *entity, char *buffer, int 
 
   /* each NACK adds 12 bits */
   sn = entity->vr_r;
-  while (bits + 12 <= size && sn_compare(entity, sn, entity->vr_ms) < 0) {
+  while (bits + 12 <= size && sn_compare_rx(entity, sn, entity->vr_ms) < 0) {
     if (!(rlc_am_segment_full(entity, sn))) {
       /* put previous e1 (is 1) */
       rlc_pdu_encoder_put_bits(&encoder, 1, 1);
@@ -474,7 +504,7 @@ static int rlc_entity_am_send_status(rlc_entity_am_t *entity, char *buffer, int 
   }
 
   /* go to highest full sn+1 for ACK, VR(MS) is the limit */
-  while (sn_compare(entity, ack, entity->vr_ms) < 0 &&
+  while (sn_compare_rx(entity, ack, entity->vr_ms) < 0 &&
          rlc_am_segment_full(entity, ack)) {
     ack = (ack + 1) % 1024;
   }
@@ -504,28 +534,108 @@ static int rlc_entity_am_send_status(rlc_entity_am_t *entity, char *buffer, int 
   return encoder.byte;
 }
 
-static int rlc_am_status_to_report(rlc_entity_am_t *entity)
+static int status_to_report(rlc_entity_am_t *entity)
 {
   return entity->status_triggered &&
          (entity->common.t_current - entity->t_status_prohibit_start > entity->t_status_prohibit);
 }
 
-int rlc_entity_am_send_size(rlc_entity_t *_entity, int maxsize)
+static int tx_pdu_size(rlc_entity_am_t *entity, int maxsize)
+{
+  int ret = 0;
+  int sdu_count;
+  int sdu_size;
+  int pdu_data_size;
+  rlc_sdu_t *sdu;
+
+  /* TX PDU - let's make the biggest PDU we can with the SDUs we have */
+  sdu_count = 0;
+  pdu_data_size = 0;
+  sdu = entity->tx_list;
+  while (sdu != NULL) {
+    /* include SDU only if it has not been fully included in PDUs already */
+    if (sdu->next_byte != sdu->size) {
+      int new_header_size = header_size(sdu_count+1);
+      /* if we cannot put new header + at least 1 byte of data then over */
+      if (new_header_size + pdu_data_size >= maxsize)
+        break;
+      sdu_count++;
+      /* only include the bytes of this SDU not included in PDUs already */
+      sdu_size = sdu->size - sdu->next_byte;
+      /* don't feed more than 'maxsize' bytes */
+      if (new_header_size + pdu_data_size + sdu_size > maxsize)
+        sdu_size = maxsize - new_header_size - pdu_data_size;
+      pdu_data_size += sdu_size;
+      /* if we put more than 2^11-1 bytes then the LI field cannot be used,
+       * so this is the last SDU we can put
+       */
+      if (sdu_size > 2047)
+        break;
+    }
+    sdu = sdu->next;
+  }
+
+  if (sdu_count)
+    ret = header_size(sdu_count) + pdu_data_size;
+
+  return ret;
+}
+
+static int retx_pdu_size(rlc_entity_am_t *entity, int maxsize)
+{
+  return 0;
+}
+
+rlc_entity_buffer_status_t rlc_entity_am_buffer_status(
+    rlc_entity_t *_entity, int maxsize)
+{
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
+  rlc_entity_buffer_status_t ret;
+
+  /* status PDU, if we have to */
+  if (status_to_report(entity))
+    ret.status_size = status_size(entity, maxsize);
+  else
+    ret.status_size = 0;
+
+  /* TX PDU */
+  ret.tx_size = tx_pdu_size(entity, maxsize);
+
+  /* reTX PDU */
+  ret.retx_size = retx_pdu_size(entity, maxsize);
+
+  return ret;
+}
+
+int rlc_entity_am_generate_pdu(rlc_entity_t *_entity, char *buffer, int size)
 {
   rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
 
-  if (rlc_am_status_to_report(entity))
-    return rlc_entity_am_status_size(entity, maxsize);
+  if (status_to_report(entity))
+    return generate_status(entity, buffer, size);
 
   return 0;
 }
 
-int rlc_entity_am_send(rlc_entity_t *_entity, char *buffer, int size)
+void rlc_entity_am_recv_sdu(rlc_entity_t *_entity, char *buffer, int size)
 {
   rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
+  rlc_sdu_t *sdu;
 
-  if (rlc_am_status_to_report(entity))
-    return rlc_entity_am_send_status(entity, buffer, size);
+  if (size > SDU_MAX) {
+    printf("%s:%d:%s: fatal: SDU size too big (%d bytes)\n",
+           __FILE__, __LINE__, __FUNCTION__, size);
+    exit(1);
+  }
 
-  return 0;
+  if (entity->tx_size + size > entity->tx_maxsize) {
+    printf("%s:%d:%s: warning: SDU rejected, SDU buffer full\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    return;
+  }
+
+  entity->tx_size += size;
+
+  sdu = rlc_new_sdu(buffer, size);
+  rlc_sdu_list_add(&entity->tx_list, &entity->tx_end, sdu);
 }

@@ -47,7 +47,7 @@ void mac_rlc_data_ind     (
   switch (channel_idP) {
   case 1:
     ue->srb[0]->t_current = rlc_current_time;
-    ue->srb[0]->recv(ue->srb[0], buffer_pP, tb_sizeP);
+    ue->srb[0]->recv_pdu(ue->srb[0], buffer_pP, tb_sizeP);
     break;
   default:
     printf("%s:%d:%s: todo (channel ID %d)\n", __FILE__, __LINE__, __FUNCTION__, channel_idP); exit(1);
@@ -88,7 +88,7 @@ tbs_size_t mac_rlc_data_req(
   rb->t_current = rlc_current_time;
 
   if (rb != NULL)
-    ret = rb->send(rb, buffer_pP, ue->saved_status_ind_tb_size[channel_idP - 1]);
+    ret = rb->generate_pdu(rb, buffer_pP, ue->saved_status_ind_tb_size[channel_idP - 1]);
   else
     ret = 0;
 
@@ -136,8 +136,15 @@ mac_rlc_status_resp_t mac_rlc_status_ind(
   }
 
   if (rb != NULL) {
+    rlc_entity_buffer_status_t buf_stat;
     rb->t_current = rlc_current_time;
-    ret.bytes_in_buffer = rb->send_size(rb, tb_sizeP ? tb_sizeP : 1000000);
+    buf_stat = rb->buffer_status(rb, tb_sizeP ? tb_sizeP : 1000000);
+    if (buf_stat.status_size)
+      ret.bytes_in_buffer = buf_stat.status_size;
+    else if (buf_stat.retx_size)
+      ret.bytes_in_buffer = buf_stat.retx_size;
+    else
+      ret.bytes_in_buffer = buf_stat.tx_size;
     ue->saved_status_ind_tb_size[channel_idP - 1] = tb_sizeP;
   } else {
     ret.bytes_in_buffer = 0;
@@ -320,6 +327,7 @@ static void add_srb(int rnti, struct LTE_SRB_ToAddMod *s)
   rlc_manager_lock(rlc_ue_manager);
   ue = rlc_manager_get_ue(rlc_ue_manager, rnti);
   rlc_am = new_rlc_entity_am(100000,
+                             100000,
                              deliver_sdu, ue,
                              t_reordering, t_status_prohibit, t_poll_retransmit,
                              poll_pdu, poll_byte, max_retx_threshold);

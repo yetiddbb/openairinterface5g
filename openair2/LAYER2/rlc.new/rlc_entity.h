@@ -3,11 +3,22 @@
 
 #include <stdint.h>
 
-typedef struct rlc_entity_t {
-  void (*recv)(struct rlc_entity_t *entity, char *buffer, int size);
-  int (*send_size)(struct rlc_entity_t *entity, int maxsize);
-  int (*send)(struct rlc_entity_t *entity, char *buffer, int size);
+typedef struct {
+  int status_size;
+  int tx_size;
+  int retx_size;
+} rlc_entity_buffer_status_t;
 
+typedef struct rlc_entity_t {
+  /* functions provided by the RLC module */
+  void (*recv_pdu)(struct rlc_entity_t *entity, char *buffer, int size);
+  rlc_entity_buffer_status_t (*buffer_status)(
+      struct rlc_entity_t *entity, int maxsize);
+  int (*generate_pdu)(struct rlc_entity_t *entity, char *buffer, int size);
+
+  void (*recv_sdu)(struct rlc_entity_t *entity, char *buffer, int size);
+
+  /* callbacks provided to the RLC module */
   void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
                       char *buf, int size);
   void *deliver_sdu_data;
@@ -18,6 +29,7 @@ typedef struct rlc_entity_t {
 
 rlc_entity_t *new_rlc_entity_am(
     int rx_maxsize,
+    int tx_maxsize,
     void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
                       char *buf, int size),
     void *deliver_sdu_data,

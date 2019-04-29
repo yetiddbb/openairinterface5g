@@ -1372,6 +1372,7 @@ set(L2_SRC
   ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_entity.c
   ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_entity_am.c
   ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_pdu.c
+  ${OPENAIR2_DIR}/LAYER2/rlc.new/rlc_sdu.c
 #  ${RLC_AM_DIR}/rlc_am.c
 #  ${RLC_AM_DIR}/rlc_am_init.c
 #  ${RLC_AM_DIR}/rlc_am_timer_poll_retransmit.c

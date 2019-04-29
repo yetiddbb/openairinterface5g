@@ -2,7 +2,7 @@
 #define _RLC_PDU_H_
 
 /**************************************************************************/
-/* PDU segment and segment list                                           */
+/* RX PDU segment and segment list                                        */
 /**************************************************************************/
 
 typedef struct {
@@ -28,6 +28,18 @@ void rlc_free_pdu_segment(rlc_pdu_segment_t *pdu_segment);
 rlc_pdu_segment_list_t *rlc_pdu_segment_list_add(
     int (*sn_compare)(void *, int, int), void *sn_compare_data,
     rlc_pdu_segment_list_t *list, rlc_pdu_segment_t *pdu_segment);
+
+/**************************************************************************/
+/* TX PDU management                                                      */
+/**************************************************************************/
+
+typedef struct {
+  int       sn;
+  void      *start_sdu;        /* real type is rlc_sdu_t * */
+  int       sdu_start_byte;    /* starting byte in 'start_sdu' */
+  int       so;                /* starting byte of the segment in full PDU */
+  int       size;
+} rlc_tx_pdu_segment_t;
 
 /**************************************************************************/
 /* PDU decoder                                                            */

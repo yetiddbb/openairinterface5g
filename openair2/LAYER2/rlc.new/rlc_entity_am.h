@@ -5,6 +5,7 @@
 
 #include "rlc_entity.h"
 #include "rlc_pdu.h"
+#include "rlc_sdu.h"
 
 #define SDU_MAX 16000   /* maximum PDCP SDU size is 8188, let's take more */
 
@@ -207,14 +208,20 @@ typedef struct {
   int poll_byte;
   int max_retx_threshold;
 
-  /* runtime */
+  /* runtime rx */
   int vr_r;
-  //int vr_mr;
   int vr_x;
   int vr_ms;
   int vr_h;
 
   int status_triggered;
+
+  /* runtime tx */
+  int vt_a;
+  int vt_s;
+  int poll_sn;
+  int pdu_without_poll;
+  int byte_without_poll;
 
   /* timers (stores the TTI of activation, 0 means not active) */
   uint64_t t_reordering_start;
@@ -227,10 +234,21 @@ typedef struct {
 
   /* reassembly management */
   rlc_am_reassemble_t    reassemble;
+
+  /* tx management */
+  rlc_sdu_t *tx_list;
+  rlc_sdu_t *tx_end;
+  int       tx_size;
+  int       tx_maxsize;
+
+  rlc_tx_pdu_segment_t *wait_list;
+  rlc_tx_pdu_segment_t *retransmit_list;
 } rlc_entity_am_t;
 
-void rlc_entity_am_recv(rlc_entity_t *entity, char *buffer, int size);
-int rlc_entity_am_send_size(rlc_entity_t *entity, int maxsize);
-int rlc_entity_am_send(struct rlc_entity_t *entity, char *buffer, int size);
+void rlc_entity_am_recv_sdu(rlc_entity_t *entity, char *buffer, int size);
+void rlc_entity_am_recv_pdu(rlc_entity_t *entity, char *buffer, int size);
+rlc_entity_buffer_status_t rlc_entity_am_buffer_status(
+    rlc_entity_t *entity, int maxsize);
+int rlc_entity_am_generate_pdu(struct rlc_entity_t *entity, char *buffer, int size);
 
 #endif /* _RLC_ENTITY_AM_H_ */
