@@ -33,13 +33,21 @@ rlc_pdu_segment_list_t *rlc_pdu_segment_list_add(
 /* TX PDU management                                                      */
 /**************************************************************************/
 
-typedef struct {
+typedef struct rlc_tx_pdu_segment_t {
   int       sn;
   void      *start_sdu;        /* real type is rlc_sdu_t * */
   int       sdu_start_byte;    /* starting byte in 'start_sdu' */
   int       so;                /* starting byte of the segment in full PDU */
-  int       size;
+  int       data_size;         /* number of data bytes (exclude header) */
+  int       is_segment;
+  int       retx_count;
+  struct rlc_tx_pdu_segment_t *next;
 } rlc_tx_pdu_segment_t;
+
+rlc_tx_pdu_segment_t *rlc_tx_new_pdu(void);
+void rlc_tx_free_pdu(rlc_tx_pdu_segment_t *pdu);
+rlc_tx_pdu_segment_t *rlc_tx_pdu_list_append(rlc_tx_pdu_segment_t *list,
+    rlc_tx_pdu_segment_t *pdu);
 
 /**************************************************************************/
 /* PDU decoder                                                            */

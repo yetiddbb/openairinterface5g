@@ -3,9 +3,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /*************************************************************************/
-/* RX functions                                                          */
+/* PDU RX functions                                                      */
 /*************************************************************************/
 
 static int modulus_rx(rlc_entity_am_t *entity, int a)
@@ -408,6 +409,37 @@ discard:
 /* TX functions                                                          */
 /*************************************************************************/
 
+static int pdu_size(rlc_entity_am_t *entity, rlc_tx_pdu_segment_t *pdu)
+{
+  int size;
+  int sdu_count;
+  int data_size;
+  int li_bits;
+  rlc_sdu_t *sdu;
+
+  size = 2;
+  data_size = pdu->data_size;
+
+  if (pdu->is_segment)
+    size += 2;
+
+  sdu = pdu->start_sdu;
+
+  sdu_count = 1;
+  data_size -= sdu->size - pdu->sdu_start_byte;
+  sdu = sdu->next;
+
+  while (data_size > 0) {
+    sdu_count++;
+    data_size -= sdu->size;
+    sdu = sdu->next;
+  }
+
+  li_bits = 12 * sdu_count;
+
+  return size + (li_bits + 7) / 8;
+}
+
 static int modulus_tx(rlc_entity_am_t *entity, int a)
 {
   /* as per 36.322 7.1, modulus base is vt(a) and modulus is 1024 for tx */
@@ -427,6 +459,67 @@ static int header_size(int sdu_count)
   int bits = 16 + 12 * (sdu_count-1);
   /* padding if we have to */
   return (bits + 7) / 8;
+}
+
+typedef struct {
+  int sdu_count;
+  int data_size;
+  int header_size;
+} tx_pdu_size_t;
+
+static tx_pdu_size_t tx_pdu_size(rlc_entity_am_t *entity, int maxsize)
+{
+  tx_pdu_size_t ret;
+  int sdu_count;
+  int sdu_size;
+  int pdu_data_size;
+  rlc_sdu_t *sdu;
+
+  int vt_ms = (entity->vt_a + 512) % 1024;
+
+  ret.sdu_count = 0;
+  ret.data_size = 0;
+  ret.header_size = 0;
+
+  /* sn out of window? nothing to do */
+  if (!(sn_compare_tx(entity, entity->vt_s, entity->vt_a) >= 0 &&
+        sn_compare_tx(entity, entity->vt_s, vt_ms) < 0))
+    return ret;
+
+  /* TX PDU - let's make the biggest PDU we can with the SDUs we have */
+  sdu_count = 0;
+  pdu_data_size = 0;
+  sdu = entity->tx_list;
+  while (sdu != NULL) {
+    /* include SDU only if it has not been fully included in PDUs already */
+    if (sdu->next_byte != sdu->size) {
+      int new_header_size = header_size(sdu_count+1);
+      /* if we cannot put new header + at least 1 byte of data then over */
+      if (new_header_size + pdu_data_size >= maxsize)
+        break;
+      sdu_count++;
+      /* only include the bytes of this SDU not included in PDUs already */
+      sdu_size = sdu->size - sdu->next_byte;
+      /* don't feed more than 'maxsize' bytes */
+      if (new_header_size + pdu_data_size + sdu_size > maxsize)
+        sdu_size = maxsize - new_header_size - pdu_data_size;
+      pdu_data_size += sdu_size;
+      /* if we put more than 2^11-1 bytes then the LI field cannot be used,
+       * so this is the last SDU we can put
+       */
+      if (sdu_size > 2047)
+        break;
+    }
+    sdu = sdu->next;
+  }
+
+  if (sdu_count) {
+    ret.sdu_count = sdu_count;
+    ret.data_size = pdu_data_size;
+    ret.header_size = header_size(sdu_count);
+  }
+
+  return ret;
 }
 
 static int status_size(rlc_entity_am_t *entity, int maxsize)
@@ -534,56 +627,259 @@ static int generate_status(rlc_entity_am_t *entity, char *buffer, int size)
   return encoder.byte;
 }
 
+int transmission_buffer_empty(rlc_entity_am_t *entity)
+{
+  rlc_sdu_t *sdu;
+
+  /* is transmission buffer empty? */
+  sdu = entity->tx_list;
+  while (sdu != NULL) {
+    if (sdu->next_byte != sdu->size)
+      return 0;
+  }
+  return 1;
+}
+
+int check_poll_after_pdu_assembly(rlc_entity_am_t *entity)
+{
+  int retransmission_buffer_empty;
+  int window_stalling;
+  int vt_ms;
+
+  /* is retransmission buffer empty? */
+  if (entity->retransmit_list == NULL)
+    retransmission_buffer_empty = 1;
+  else
+    retransmission_buffer_empty = 0;
+
+  /* is window stalling? */
+  vt_ms = (entity->vt_a + 512) % 1024;
+  if (!(sn_compare_tx(entity, entity->vt_s, entity->vt_a) >= 0 &&
+        sn_compare_tx(entity, entity->vt_s, vt_ms) < 0))
+    window_stalling = 1;
+  else
+    window_stalling = 0;
+
+  return (transmission_buffer_empty(entity) && retransmission_buffer_empty) ||
+         window_stalling;
+}
+
+void include_poll(rlc_entity_am_t *entity, char *buffer)
+{
+  /* set the P bit to 1 */
+  buffer[0] |= 0x20;
+
+  entity->pdu_without_poll = 0;
+  entity->byte_without_poll = 0;
+
+  /* set POLL_SN to VT(S) - 1 */
+  entity->poll_sn = (entity->vt_s + 1023) % 1024;
+
+  /* start t_poll_retransmit */
+  entity->t_poll_retransmit_start = entity->common.t_current;
+}
+
+static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
+{
+  int                  vt_ms;
+  tx_pdu_size_t        pdu_size;
+  int                  first_sdu_full;
+  int                  last_sdu_full;
+  rlc_tx_pdu_segment_t *pdu;
+  rlc_sdu_t            *sdu;
+  int                  i;
+  int                  cursize;
+  rlc_pdu_encoder_t    encoder;
+  int                  fi;
+  int                  e;
+  int                  li;
+  char                 *out;
+  int                  outpos;
+  int                  p;
+
+  /* sn out of window? do nothing */
+  vt_ms = (entity->vt_a + 512) % 1024;
+  if (!(sn_compare_tx(entity, entity->vt_s, entity->vt_a) >= 0 &&
+        sn_compare_tx(entity, entity->vt_s, vt_ms) < 0))
+    return 0;
+
+  pdu_size = tx_pdu_size(entity, bufsize);
+  if (pdu_size.sdu_count == 0)
+    return 0;
+
+  pdu = rlc_tx_new_pdu();
+
+  pdu->sn = entity->vt_s;
+  entity->vt_s = (entity->vt_s + 1) % 1024;
+
+  /* go to first SDU (skip those already fully processed) */
+  sdu = entity->tx_list;
+  while (sdu->next_byte == sdu->size)
+    sdu = sdu->next;
+
+  pdu->start_sdu = sdu;
+
+  first_sdu_full = sdu->next_byte == 0;
+
+  pdu->sdu_start_byte = sdu->next_byte;
+
+  pdu->so = 0;
+  pdu->is_segment = 0;
+  pdu->retx_count = 0;
+
+  /* reserve SDU bytes */
+  cursize = 0;
+  last_sdu_full = 1;
+  for (i = 0; i < pdu_size.sdu_count; i++, sdu = sdu->next) {
+    int sdu_size = sdu->size - sdu->next_byte;
+    if (cursize + sdu_size > pdu_size.data_size) {
+      sdu_size = pdu_size.data_size - cursize;
+      last_sdu_full = 0;
+    }
+    sdu->next_byte += sdu_size;
+    cursize += sdu_size;
+  }
+
+  /* generate header */
+  rlc_pdu_encoder_init(&encoder, buffer, bufsize);
+
+  rlc_pdu_encoder_put_bits(&encoder, 1, 1);         /* D/C: 1 = data */
+  rlc_pdu_encoder_put_bits(&encoder, 0, 1);         /* RF: 0 = PDU */
+  rlc_pdu_encoder_put_bits(&encoder, 0, 1);         /* P: reserve, set later */
+
+  fi = 0;
+  if (!first_sdu_full)
+    fi |= 0x02;
+  if (!last_sdu_full)
+    fi |= 0x01;
+  rlc_pdu_encoder_put_bits(&encoder, fi, 2);        /* FI */
+
+  /* to understand the logic for Es and LIs:
+   * If we have:
+   *   1 SDU:   E=0
+   *
+   *   2 SDUs:  E=1
+   *     then:  E=0 LI(sdu[0])
+   *
+   *   3 SDUs:  E=1
+   *     then:  E=1 LI(sdu[0])
+   *     then:  E=0 LI(sdu[1])
+   *
+   *   4 SDUs:  E=1
+   *     then:  E=1 LI(sdu[0])
+   *     then:  E=1 LI(sdu[1])
+   *     then:  E=0 LI(sdu[2])
+   */
+  if (pdu_size.sdu_count >= 2)
+    e = 1;
+  else
+    e = 0;
+  rlc_pdu_encoder_put_bits(&encoder, e, 1);         /* E */
+
+  rlc_pdu_encoder_put_bits(&encoder, pdu->sn, 10);  /* SN */
+
+  /* put LIs */
+  sdu = pdu->start_sdu;
+  /* first SDU */
+  li = sdu->size - pdu->sdu_start_byte;
+  /* put E+LI only if at least 2 SDUs */
+  if (pdu_size.sdu_count >= 2) {
+    /* E is 1 if at least 3 SDUs */
+    if (pdu_size.sdu_count >= 3)
+      e = 1;
+    else
+      e = 0;
+    rlc_pdu_encoder_put_bits(&encoder, e, 1);       /* E */
+    rlc_pdu_encoder_put_bits(&encoder, li, 11);     /* LI */
+  }
+  /* next SDUs, but not the last (no LI for the last) */
+  sdu = sdu->next;
+  for (i = 2; i < pdu_size.sdu_count; i++, sdu = sdu->next) {
+    if (i != pdu_size.sdu_count - 1)
+      e = 1;
+    else
+      e = 0;
+    li = sdu->size;
+    rlc_pdu_encoder_put_bits(&encoder, e, 1);       /* E */
+    rlc_pdu_encoder_put_bits(&encoder, li, 11);     /* LI */
+  }
+
+  rlc_pdu_encoder_align(&encoder);
+
+  /* generate data */
+  out = buffer + encoder.byte;
+  sdu = pdu->start_sdu;
+  /* first SDU */
+  li = sdu->size - pdu->sdu_start_byte;
+  memcpy(out, sdu->data + pdu->sdu_start_byte, li);
+  outpos = li;
+  /* next SDUs */
+  sdu = sdu->next;
+  for (i = 1; i < pdu_size.sdu_count; i++, sdu = sdu->next) {
+    li = sdu->size;
+    if (outpos + li >= pdu_size.data_size)
+      li = pdu_size.data_size - outpos;
+    memcpy(out+outpos, sdu->data, li);
+    outpos += li;
+  }
+
+  /* put PDU at the end of the wait list */
+  entity->wait_list = rlc_tx_pdu_list_append(entity->wait_list, pdu);
+
+  /* polling actions for a new PDU */
+  entity->pdu_without_poll++;
+  entity->byte_without_poll += pdu_size.data_size;
+  if ((entity->poll_pdu != -1 &&
+       entity->pdu_without_poll >= entity->poll_pdu) ||
+      (entity->poll_byte != -1 &&
+       entity->byte_without_poll >= entity->poll_byte))
+    p = 1;
+  else
+    p = check_poll_after_pdu_assembly(entity);
+
+  if (p)
+    include_poll(entity, buffer);
+
+  return pdu_size.header_size + pdu_size.data_size;
+}
+
+static int generate_retx_pdu(rlc_entity_am_t *entity, char *buffer, int size)
+{
+  printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__);
+  exit(1);
+  return 0;
+}
+
 static int status_to_report(rlc_entity_am_t *entity)
 {
   return entity->status_triggered &&
-         (entity->common.t_current - entity->t_status_prohibit_start > entity->t_status_prohibit);
-}
-
-static int tx_pdu_size(rlc_entity_am_t *entity, int maxsize)
-{
-  int ret = 0;
-  int sdu_count;
-  int sdu_size;
-  int pdu_data_size;
-  rlc_sdu_t *sdu;
-
-  /* TX PDU - let's make the biggest PDU we can with the SDUs we have */
-  sdu_count = 0;
-  pdu_data_size = 0;
-  sdu = entity->tx_list;
-  while (sdu != NULL) {
-    /* include SDU only if it has not been fully included in PDUs already */
-    if (sdu->next_byte != sdu->size) {
-      int new_header_size = header_size(sdu_count+1);
-      /* if we cannot put new header + at least 1 byte of data then over */
-      if (new_header_size + pdu_data_size >= maxsize)
-        break;
-      sdu_count++;
-      /* only include the bytes of this SDU not included in PDUs already */
-      sdu_size = sdu->size - sdu->next_byte;
-      /* don't feed more than 'maxsize' bytes */
-      if (new_header_size + pdu_data_size + sdu_size > maxsize)
-        sdu_size = maxsize - new_header_size - pdu_data_size;
-      pdu_data_size += sdu_size;
-      /* if we put more than 2^11-1 bytes then the LI field cannot be used,
-       * so this is the last SDU we can put
-       */
-      if (sdu_size > 2047)
-        break;
-    }
-    sdu = sdu->next;
-  }
-
-  if (sdu_count)
-    ret = header_size(sdu_count) + pdu_data_size;
-
-  return ret;
+         (entity->t_status_prohibit_start == 0 ||
+          entity->common.t_current - entity->t_status_prohibit_start >
+              entity->t_status_prohibit);
 }
 
 static int retx_pdu_size(rlc_entity_am_t *entity, int maxsize)
 {
-  return 0;
+  int size;
+
+  if (entity->retransmit_list == NULL)
+    return 0;
+
+  size = pdu_size(entity, entity->retransmit_list);
+  if (size <= maxsize)
+    return size;
+
+  /* we can segment head of retransmist list if maxsize is large enough
+   * to hold a PDU segment with at least 1 data byte (so 5 bytes: 4 bytes
+   * header + 1 byte data)
+   */
+  if (maxsize < 5)
+    return 0;
+
+  /* a later segmentation of the head of retransmit list will generate a pdu
+   * of size 'maxsize'
+   */
+  return maxsize;
 }
 
 rlc_entity_buffer_status_t rlc_entity_am_buffer_status(
@@ -591,6 +887,7 @@ rlc_entity_buffer_status_t rlc_entity_am_buffer_status(
 {
   rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   rlc_entity_buffer_status_t ret;
+  tx_pdu_size_t tx_size;
 
   /* status PDU, if we have to */
   if (status_to_report(entity))
@@ -599,7 +896,8 @@ rlc_entity_buffer_status_t rlc_entity_am_buffer_status(
     ret.status_size = 0;
 
   /* TX PDU */
-  ret.tx_size = tx_pdu_size(entity, maxsize);
+  tx_size = tx_pdu_size(entity, maxsize);
+  ret.tx_size = tx_size.data_size + tx_size.header_size;
 
   /* reTX PDU */
   ret.retx_size = retx_pdu_size(entity, maxsize);
@@ -614,8 +912,15 @@ int rlc_entity_am_generate_pdu(rlc_entity_t *_entity, char *buffer, int size)
   if (status_to_report(entity))
     return generate_status(entity, buffer, size);
 
-  return 0;
+  if (entity->retransmit_list != NULL)
+    return generate_retx_pdu(entity, buffer, size);
+
+  return generate_tx_pdu(entity, buffer, size);
 }
+
+/*************************************************************************/
+/* SDU RX functions                                                      */
+/*************************************************************************/
 
 void rlc_entity_am_recv_sdu(rlc_entity_t *_entity, char *buffer, int size)
 {

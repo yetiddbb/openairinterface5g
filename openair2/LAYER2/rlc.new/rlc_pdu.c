@@ -5,7 +5,7 @@
 #include <string.h>
 
 /**************************************************************************/
-/* PDU segment and segment list                                           */
+/* RX PDU segment and segment list                                        */
 /**************************************************************************/
 
 rlc_pdu_segment_t *rlc_new_pdu_segment(int sn, int so, int size,
@@ -77,6 +77,25 @@ rlc_pdu_segment_list_t *rlc_pdu_segment_list_add(
     }
     cur = cur->next;
   }
+}
+
+/**************************************************************************/
+/* TX PDU management                                                      */
+/**************************************************************************/
+
+rlc_tx_pdu_segment_t *rlc_tx_new_pdu(void)
+{
+  rlc_tx_pdu_segment_t *ret = calloc(1, sizeof(rlc_tx_pdu_segment_t));
+  if (ret == NULL) {
+    printf("%s:%d:%s: out of memory\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+  return ret;
+}
+
+void rlc_tx_free_pdu(rlc_tx_pdu_segment_t *pdu)
+{
+  free(pdu);
 }
 
 /**************************************************************************/

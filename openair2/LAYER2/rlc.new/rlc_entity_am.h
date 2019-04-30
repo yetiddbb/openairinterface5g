@@ -204,8 +204,8 @@ typedef struct {
   int t_reordering;
   int t_status_prohibit;
   int t_poll_retransmit;
-  int poll_pdu;
-  int poll_byte;
+  int poll_pdu;              /* -1 means infinity */
+  int poll_byte;             /* -1 means infinity */
   int max_retx_threshold;
 
   /* runtime rx */
@@ -226,6 +226,7 @@ typedef struct {
   /* timers (stores the TTI of activation, 0 means not active) */
   uint64_t t_reordering_start;
   uint64_t t_status_prohibit_start;
+  uint64_t t_poll_retransmit_start;
 
   /* rx management */
   rlc_pdu_segment_list_t *rx_list;
