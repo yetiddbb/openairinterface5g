@@ -98,6 +98,59 @@ void rlc_tx_free_pdu(rlc_tx_pdu_segment_t *pdu)
   free(pdu);
 }
 
+rlc_tx_pdu_segment_t *rlc_tx_pdu_list_append(rlc_tx_pdu_segment_t *list,
+    rlc_tx_pdu_segment_t *pdu)
+{
+  rlc_tx_pdu_segment_t head;
+  rlc_tx_pdu_segment_t *cur;
+
+  head.next = list;
+
+  cur = &head;
+  while (cur->next != NULL) {
+    cur = cur->next;
+  }
+  cur->next = pdu;
+
+  return head.next;
+}
+
+rlc_tx_pdu_segment_t *rlc_tx_pdu_list_add(
+    int (*sn_compare)(void *, int, int), void *sn_compare_data,
+    rlc_tx_pdu_segment_t *list, rlc_tx_pdu_segment_t *pdu_segment)
+{
+  rlc_tx_pdu_segment_t *ret = pdu_segment;
+  rlc_tx_pdu_segment_t *cur;
+
+  ret->next = NULL;
+
+  /* order is by 'sn', if 'sn' is the same then order is by 'so' */
+  cur = list;
+  if (cur == NULL) return ret;
+
+  while (1) {
+    /* check if 'ret' is before 'cur' in the list */
+    if (sn_compare(sn_compare_data, cur->sn, ret->sn) > 0 ||
+        (cur->sn == ret->sn && cur->so > ret->so)) {
+      rlc_tx_pdu_segment_t *prev = cur->prev;
+      cur->prev = ret;
+      ret->next = cur;
+      ret->prev = prev;
+      /* if 'cur' was the head of the list, then 'ret' is the new head */
+      if (prev == NULL) return ret;
+      prev->next = ret;
+      return list;
+    }
+    /* if 'cur' is the last of the list then 'ret' is the new last */
+    if (cur->next == NULL) {
+      cur->next = ret;
+      ret->prev = cur;
+      return list;
+    }
+    cur = cur->next;
+  }
+}
+
 /**************************************************************************/
 /* PDU decoder                                                            */
 /**************************************************************************/

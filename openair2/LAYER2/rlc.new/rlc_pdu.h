@@ -48,6 +48,9 @@ rlc_tx_pdu_segment_t *rlc_tx_new_pdu(void);
 void rlc_tx_free_pdu(rlc_tx_pdu_segment_t *pdu);
 rlc_tx_pdu_segment_t *rlc_tx_pdu_list_append(rlc_tx_pdu_segment_t *list,
     rlc_tx_pdu_segment_t *pdu);
+rlc_tx_pdu_segment_t *rlc_tx_pdu_list_add(
+    int (*sn_compare)(void *, int, int), void *sn_compare_data,
+    rlc_tx_pdu_segment_t *list, rlc_tx_pdu_segment_t *pdu_segment);
 
 /**************************************************************************/
 /* PDU decoder                                                            */

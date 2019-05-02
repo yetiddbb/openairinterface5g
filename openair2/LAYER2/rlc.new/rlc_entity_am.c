@@ -17,6 +17,15 @@ static int modulus_rx(rlc_entity_am_t *entity, int a)
   return r;
 }
 
+/* used in both RX and TX processing */
+static int modulus_tx(rlc_entity_am_t *entity, int a)
+{
+  /* as per 36.322 7.1, modulus base is vt(a) and modulus is 1024 for tx */
+  int r = a - entity->vt_a;
+  if (r < 0) r += 1024;
+  return r;
+}
+
 static int sn_in_recv_window(void *_entity, int sn)
 {
   rlc_entity_am_t *entity = _entity;
@@ -29,6 +38,13 @@ static int sn_compare_rx(void *_entity, int a, int b)
 {
   rlc_entity_am_t *entity = _entity;
   return modulus_rx(entity, a) - modulus_rx(entity, b);
+}
+
+/* used in both RX and TX processing */
+static int sn_compare_tx(void *_entity, int a, int b)
+{
+  rlc_entity_am_t *entity = _entity;
+  return modulus_tx(entity, a) - modulus_tx(entity, b);
 }
 
 static int segment_already_received(rlc_entity_am_t *entity,
@@ -249,12 +265,163 @@ static void rlc_am_reception_actions(rlc_entity_am_t *entity,
   printf("end of rlc_am_reception_actions: vr(h) %d vr(ms) %d vr(r) %d\n", entity->vr_h, entity->vr_ms, entity->vr_r);
 }
 
+static void process_received_ack(rlc_entity_am_t *entity, int sn)
+{
+  rlc_tx_pdu_segment_t head;
+  rlc_tx_pdu_segment_t *cur;
+  rlc_tx_pdu_segment_t *prev;
+
+  /* put all PDUs from wait and retransmit lists with SN < 'sn' to ack_list */
+  entity->ack_list = NULL;
+
+  /* process wait list */
+  head.next = entity->wait_list;
+  prev = &head;
+  cur = entity->wait_list;
+  while (cur != NULL) {
+    if (sn_compare_tx(entity, cur->sn, sn) < 0) {
+      /* dec. retx_count in case we put this segment in retransmit list in
+       * 'process_received_nack'
+       */
+      cur->retx_count--;
+      /* put the PDU in the ack list */
+      prev->next = cur->next;
+      cur->next = entity->ack_list;
+      entity->ack_list = cur;
+      cur = prev->next;
+    } else {
+      prev = cur;
+      cur = cur->next;
+    }
+  }
+  entity->wait_list = head.next;
+
+  /* process retransmit list */
+  head.next = entity->retransmit_list;
+  prev = &head;
+  cur = entity->wait_list;
+  while (cur != NULL) {
+    if (sn_compare_tx(entity, cur->sn, sn) < 0) {
+      /* dec. retx_count in case we put this segment back in retransmit list
+       * in 'process_received_nack'
+       */
+      cur->retx_count--;
+      /* put the PDU in the ack list */
+      prev->next = cur->next;
+      cur->next = entity->ack_list;
+      entity->ack_list = cur;
+      cur = prev->next;
+    } else {
+      prev = cur;
+      cur = cur->next;
+    }
+  }
+  entity->wait_list = head.next;
+
+}
+
+static void consider_retransmission(rlc_entity_am_t *entity,
+    rlc_tx_pdu_segment_t *cur)
+{
+  cur->retx_count++;
+
+  /* let's put in retransmit list even if we are over max_retx_threshold.
+   * upper layers should deal with this condition, internally it's better
+   * for the RLC code to keep going with this segment (we only remove
+   * a segment that was ACKed)
+   */
+  if (cur->retx_count >= entity->max_retx_threshold) {
+    printf("%s:%d:%s: todo: radio link failure to report to upper layer\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  entity->retransmit_list = rlc_tx_pdu_list_add(sn_compare_tx, entity,
+      entity->retransmit_list, cur);
+}
+
+static int so_overlap(int s1, int e1, int s2, int e2)
+{
+  if (s1 < s2) {
+    if (e1 == -1 || e1 >= s2)
+      return 1;
+    return 0;
+  }
+  if (e2 == -1 || s1 <= e2)
+    return 1;
+  return 0;
+}
+
+static void process_received_nack(rlc_entity_am_t *entity, int sn,
+    int so_start, int so_end)
+{
+  /* put all PDU segments with SN == 'sn' and with an overlapping so start/end
+   * to the retransmit list
+   * source lists are ack list and wait list.
+   * Not sure if we should consider wait list, isn't the other end supposed
+   * to only NACK SNs lower than the ACK SN sent in the status PDU, in which
+   * case all potential PDU segments should all be in ack list? in doubt
+   * let's accept anything and thus process also wait list.
+   */
+  rlc_tx_pdu_segment_t head;
+  rlc_tx_pdu_segment_t *cur;
+  rlc_tx_pdu_segment_t *prev;
+
+  /* check that VT(A) <= sn < VT(S) */
+  if (!(sn_compare_tx(entity, entity->vt_a, sn) <= 0 &&
+        sn_compare_tx(entity, sn, entity->vt_s)))
+    return;
+
+  /* process wait list */
+  head.next = entity->wait_list;
+  prev = &head;
+  cur = entity->wait_list;
+  while (cur != NULL) {
+    if (cur->sn == sn &&
+        so_overlap(so_start, so_end, cur->so, cur->so + cur->data_size - 1)) {
+      /* remove from wait list */
+      prev->next = cur->next;
+      /* consider the PDU segment for retransmission */
+      consider_retransmission(entity, cur);
+      cur = prev->next;
+    } else {
+      prev = cur;
+      cur = cur->next;
+    }
+  }
+  entity->wait_list = head.next;
+
+  /* process ack list */
+  head.next = entity->ack_list;
+  prev = &head;
+  cur = entity->ack_list;
+  while (cur != NULL) {
+    if (cur->sn == sn &&
+        so_overlap(so_start, so_end, cur->so, cur->so + cur->data_size - 1)) {
+      /* remove from ack list */
+      prev->next = cur->next;
+      /* consider the PDU segment for retransmission */
+      consider_retransmission(entity, cur);
+      cur = prev->next;
+    } else {
+      prev = cur;
+      cur = cur->next;
+    }
+  }
+  entity->ack_list = head.next;
+}
+
+static void finalize_ack_nack_processing(rlc_entity_am_t *entity)
+{
+}
+
 void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
 {
-#define R do { if (rlc_pdu_decoder_in_error(&decoder)) goto err; } while (0)
+#define R(d) do { if (rlc_pdu_decoder_in_error(&d)) goto err; } while (0)
   rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   rlc_pdu_decoder_t decoder;
   rlc_pdu_decoder_t data_decoder;
+  rlc_pdu_decoder_t so_decoder;
 
   int dc;
   int rf;
@@ -265,6 +432,17 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   int sn;
   int lsf;
   int so;
+
+  int cpt;
+  int e1;
+  int e2;
+  int ack_sn;
+  int nack_sn;
+  int so_start;
+  int so_end;
+  int so_e1;
+  int so_e2;
+  int so_count;
 
   int data_e;
   int data_li;
@@ -281,15 +459,15 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   printf("\n");
 
   rlc_pdu_decoder_init(&decoder, buffer, size);
-  dc = rlc_pdu_decoder_get_bits(&decoder, 1); R;
+  dc = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
   if (dc == 0) goto control;
 
   /* data PDU */
-  rf = rlc_pdu_decoder_get_bits(&decoder, 1); R;
-  p  = rlc_pdu_decoder_get_bits(&decoder, 1); R;
-  fi = rlc_pdu_decoder_get_bits(&decoder, 2); R;
-  e  = rlc_pdu_decoder_get_bits(&decoder, 1); R;
-  sn = rlc_pdu_decoder_get_bits(&decoder, 10); R;
+  rf = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
+  p  = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
+  fi = rlc_pdu_decoder_get_bits(&decoder, 2); R(decoder);
+  e  = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
+  sn = rlc_pdu_decoder_get_bits(&decoder, 10); R(decoder);
 
   /* dicard PDU if rx buffer is full */
   if (entity->rx_size + size > entity->rx_maxsize) {
@@ -306,8 +484,8 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   }
 
   if (rf) {
-    lsf = rlc_pdu_decoder_get_bits(&decoder, 1); R;
-    so  = rlc_pdu_decoder_get_bits(&decoder, 15); R;
+    lsf = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
+    so  = rlc_pdu_decoder_get_bits(&decoder, 15); R(decoder);
   } else {
     lsf = 1;
     so = 0;
@@ -320,8 +498,8 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   data_decoder = decoder;
   data_e = e;
   while (data_e) {
-    data_e = rlc_pdu_decoder_get_bits(&data_decoder, 1); R;
-    data_li = rlc_pdu_decoder_get_bits(&data_decoder, 11); R;
+    data_e = rlc_pdu_decoder_get_bits(&data_decoder, 1); R(data_decoder);
+    data_li = rlc_pdu_decoder_get_bits(&data_decoder, 11); R(data_decoder);
     if (data_li == 0) {
       printf("%s:%d:%s: warning: discard PDU, li == 0\n",
              __FILE__, __LINE__, __FUNCTION__);
@@ -391,7 +569,63 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   return;
 
 control:
-  printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__); exit(1);
+  cpt = rlc_pdu_decoder_get_bits(&decoder, 3); R(decoder);
+  if (cpt != 0) {
+    printf("%s:%d:%s: warning: discard PDU, CPT not 0 (%d)\n",
+           __FILE__, __LINE__, __FUNCTION__, cpt);
+    goto discard;
+  }
+  ack_sn = rlc_pdu_decoder_get_bits(&decoder, 10); R(decoder);
+  e1 = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
+
+  /* let's go to start of so_start/so_end part */
+  so_decoder = decoder;
+  so_e1 = e1;
+  so_count = 0;
+  while (so_e1) {
+    rlc_pdu_decoder_get_bits(&so_decoder, 10); R(so_decoder);  /* NACK_SN */
+    so_e1 = rlc_pdu_decoder_get_bits(&so_decoder, 1); R(so_decoder);
+    so_e2 = rlc_pdu_decoder_get_bits(&so_decoder, 1); R(so_decoder);
+    if (so_e2)
+      so_count++;
+  }
+  /* discard PDU if wanted so start/end data is not fully present */
+  if (so_count * 30 > size * 8 - so_decoder.byte * 8 - so_decoder.bit) {
+    printf("%s:%d:%s: warning: discard PDU, bad so start/end\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    goto discard;
+  }
+
+  /* at this point, accept the PDU even if the actual values
+   * may be incorrect (eg. if so_start > so_end)
+   */
+  process_received_ack(entity, ack_sn);
+
+  while (e1) {
+    nack_sn = rlc_pdu_decoder_get_bits(&decoder, 10); R(decoder);
+    e1 = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
+    e2 = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
+    if (e2) {
+      so_start = rlc_pdu_decoder_get_bits(&so_decoder, 15); R(so_decoder);
+      so_end = rlc_pdu_decoder_get_bits(&so_decoder, 15); R(so_decoder);
+      if (so_end < so_start) {
+        printf("%s:%d:%s: warning, bad so start/end, NACK the whole PDU (sn %d)\n",
+               __FILE__, __LINE__, __FUNCTION__, nack_sn);
+        so_start = 0;
+        so_end = -1;
+      }
+      /* special value 0x7fff indicates 'all bytes to the end' */
+      if (so_end == 0x7fff)
+        so_end = -1;
+    } else {
+      so_start = 0;
+      so_end = -1;
+    }
+    process_received_nack(entity, nack_sn, so_start, so_end);
+  }
+
+  finalize_ack_nack_processing(entity);
+
   return;
 
 err:
@@ -438,20 +672,6 @@ static int pdu_size(rlc_entity_am_t *entity, rlc_tx_pdu_segment_t *pdu)
   li_bits = 12 * sdu_count;
 
   return size + (li_bits + 7) / 8;
-}
-
-static int modulus_tx(rlc_entity_am_t *entity, int a)
-{
-  /* as per 36.322 7.1, modulus base is vt(a) and modulus is 1024 for tx */
-  int r = a - entity->vt_a;
-  if (r < 0) r += 1024;
-  return r;
-}
-
-static int sn_compare_tx(void *_entity, int a, int b)
-{
-  rlc_entity_am_t *entity = _entity;
-  return modulus_tx(entity, a) - modulus_tx(entity, b);
 }
 
 static int header_size(int sdu_count)
@@ -620,8 +840,8 @@ static int generate_status(rlc_entity_am_t *entity, char *buffer, int size)
   /* start t_status_prohibit */
   entity->t_status_prohibit_start = entity->common.t_current;
 
-  printf("ack is %d, buffer: ", ack);
-  for (int i = 0; i < encoder.byte; i++) printf(" %2.2x", buffer[i]);
+  printf("status PDU: ack is %d, buffer: ", ack);
+  for (int i = 0; i < encoder.byte; i++) printf(" %2.2x", (unsigned char)buffer[i]);
   printf("\n");
 
   return encoder.byte;
@@ -636,6 +856,7 @@ int transmission_buffer_empty(rlc_entity_am_t *entity)
   while (sdu != NULL) {
     if (sdu->next_byte != sdu->size)
       return 0;
+    sdu = sdu->next;
   }
   return 1;
 }
@@ -839,6 +1060,10 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
 
   if (p)
     include_poll(entity, buffer);
+
+  printf("data PDU, size %d: ", pdu_size.header_size + pdu_size.data_size);
+  for (int i = 0; i < pdu_size.header_size + pdu_size.data_size; i++) printf(" %2.2x", (unsigned char)buffer[i]);
+  printf("\n");
 
   return pdu_size.header_size + pdu_size.data_size;
 }

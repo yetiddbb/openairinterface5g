@@ -244,6 +244,8 @@ typedef struct {
 
   rlc_tx_pdu_segment_t *wait_list;
   rlc_tx_pdu_segment_t *retransmit_list;
+
+  rlc_tx_pdu_segment_t *ack_list;
 } rlc_entity_am_t;
 
 void rlc_entity_am_recv_sdu(rlc_entity_t *entity, char *buffer, int size);

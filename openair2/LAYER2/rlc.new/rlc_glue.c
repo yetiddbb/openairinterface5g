@@ -177,7 +177,37 @@ rlc_op_status_t rlc_data_req     (const protocol_ctxt_t *const ctxt_pP,
 #endif
                                  )
 {
-  printf(RED "%s" RESET "\n", __FUNCTION__); return 0;
+  int rnti = ctxt_pP->rnti;
+  rlc_ue_t *ue;
+  rlc_entity_t *rb;
+
+  printf("%s rnti %d srb_flag %d rb_id %d mui %d confirm %d sdu_size %d MBMS_flag %d\n",
+         __FUNCTION__, rnti, srb_flagP, rb_idP, muiP, confirmP, sdu_sizeP,
+         MBMS_flagP);
+
+  rlc_manager_lock(rlc_ue_manager);
+  ue = rlc_manager_get_ue(rlc_ue_manager, rnti);
+
+  rb = NULL;
+
+  if (srb_flagP) {
+    if (rb_idP >= 1 && rb_idP <= 2)
+      rb = ue->srb[rb_idP - 1];
+  } else {
+    printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  if (rb != NULL) {
+    rb->t_current = rlc_current_time;
+    rb->recv_sdu(rb, (char *)sdu_pP->data, sdu_sizeP);
+  }
+
+  rlc_manager_unlock(rlc_ue_manager);
+
+  free_mem_block(sdu_pP, __func__);
+
+  return RLC_OP_STATUS_OK;
 }
 
 int rlc_module_init(void)
