@@ -31,5 +31,6 @@ rlc_ue_t *rlc_manager_get_ue(rlc_ue_manager_t *m, int rnti);
 /***********************************************************************/
 
 void rlc_ue_add_srb_rlc_entity(rlc_ue_t *ue, int srb_id, rlc_entity_t *entity);
+void rlc_ue_add_drb_rlc_entity(rlc_ue_t *ue, int drb_id, rlc_entity_t *entity);
 
 #endif /* _RLC_UE_MANAGER_H_ */

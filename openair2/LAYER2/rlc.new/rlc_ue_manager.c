@@ -71,7 +71,7 @@ rlc_ue_t *rlc_manager_get_ue(rlc_ue_manager_t *_m, int rnti)
 /* must be called with lock acquired */
 void rlc_ue_add_srb_rlc_entity(rlc_ue_t *ue, int srb_id, rlc_entity_t *entity)
 {
-  if (srb_id < 0 || srb_id > 2) {
+  if (srb_id < 1 || srb_id > 2) {
     printf("%s:%d:%s: fatal, bad srb id\n", __FILE__, __LINE__, __FUNCTION__);
     exit(1);
   }
@@ -85,4 +85,23 @@ void rlc_ue_add_srb_rlc_entity(rlc_ue_t *ue, int srb_id, rlc_entity_t *entity)
   }
 
   ue->srb[srb_id] = entity;
+}
+
+/* must be called with lock acquired */
+void rlc_ue_add_drb_rlc_entity(rlc_ue_t *ue, int drb_id, rlc_entity_t *entity)
+{
+  if (drb_id < 1 || drb_id > 5) {
+    printf("%s:%d:%s: fatal, bad drb id\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  drb_id--;
+
+  if (ue->drb[drb_id] != NULL) {
+    printf("%s:%d:%s: fatal, drb already present\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  ue->drb[drb_id] = entity;
 }

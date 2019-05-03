@@ -35,6 +35,7 @@ void mac_rlc_data_ind     (
   crc_t                    *crcs_pP)
 {
   rlc_ue_t *ue;
+  rlc_entity_t *rb;
 
   if (module_idP != 0 || eNB_index != 0 || enb_flagP != 1 || MBMS_flagP != 0) {
     printf("%s:%d:%s: fatal\n", __FILE__, __LINE__, __FUNCTION__);
@@ -45,12 +46,18 @@ void mac_rlc_data_ind     (
   ue = rlc_manager_get_ue(rlc_ue_manager, rntiP);
 
   switch (channel_idP) {
-  case 1:
-    ue->srb[0]->t_current = rlc_current_time;
-    ue->srb[0]->recv_pdu(ue->srb[0], buffer_pP, tb_sizeP);
-    break;
-  default:
-    printf("%s:%d:%s: todo (channel ID %d)\n", __FILE__, __LINE__, __FUNCTION__, channel_idP); exit(1);
+  case 1 ... 2: rb = ue->srb[channel_idP - 1]; break;
+  case 3 ... 7: rb = ue->drb[channel_idP - 3]; break;
+  default:      rb = NULL;                     break;
+  }
+
+  if (rb != NULL) {
+    rb->t_current = rlc_current_time;
+    rb->recv_pdu(rb, buffer_pP, tb_sizeP);
+  } else {
+    printf("%s:%d:%s: fatal: no RB found (channel ID %d)\n",
+           __FILE__, __LINE__, __FUNCTION__, channel_idP);
+    exit(1);
   }
 
   rlc_manager_unlock(rlc_ue_manager);
@@ -85,12 +92,14 @@ tbs_size_t mac_rlc_data_req(
   default:      rb = NULL;                     break;
   }
 
-  rb->t_current = rlc_current_time;
-
-  if (rb != NULL)
+  if (rb != NULL) {
+    rb->t_current = rlc_current_time;
     ret = rb->generate_pdu(rb, buffer_pP, ue->saved_status_ind_tb_size[channel_idP - 1]);
-  else
+  } else {
+    printf("%s:%d:%s: fatal: data req for unknown RB\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
     ret = 0;
+  }
 
   rlc_manager_unlock(rlc_ue_manager);
 
@@ -194,13 +203,16 @@ rlc_op_status_t rlc_data_req     (const protocol_ctxt_t *const ctxt_pP,
     if (rb_idP >= 1 && rb_idP <= 2)
       rb = ue->srb[rb_idP - 1];
   } else {
-    printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__);
-    exit(1);
+    if (rb_idP >= 1 && rb_idP <= 5)
+      rb = ue->drb[rb_idP - 1];
   }
 
   if (rb != NULL) {
     rb->t_current = rlc_current_time;
     rb->recv_sdu(rb, (char *)sdu_pP->data, sdu_sizeP);
+  } else {
+    printf("%s:%d:%s: fatal: SDU sent to unknown RB\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
   }
 
   rlc_manager_unlock(rlc_ue_manager);
@@ -243,19 +255,31 @@ static void deliver_sdu(void *_ue, rlc_entity_t *entity, char *buf, int size)
   int rb_id;
   protocol_ctxt_t ctx;
   mem_block_t *memblock;
+  int i;
 
-  if (entity == ue->srb[0]) {
-    is_srb = 1;
-    rb_id = 1;
-  } else
-  if (entity == ue->srb[1]) {
-    is_srb = 1;
-    rb_id = 2;
-  } else {
-    printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__);
-    exit(1);
+  /* is it SRB? */
+  for (i = 0; i < 2; i++) {
+    if (entity == ue->srb[i]) {
+      is_srb = 1;
+      rb_id = i+1;
+      goto rb_found;
+    }
   }
 
+  /* maybe DRB? */
+  for (i = 0; i < 5; i++) {
+    if (entity == ue->drb[i]) {
+      is_srb = 0;
+      rb_id = i+1;
+      goto rb_found;
+    }
+  }
+
+  printf("%s:%d:%s: fatal, no RB found for ue %d\n",
+         __FILE__, __LINE__, __FUNCTION__, ue->rnti);
+  exit(1);
+
+rb_found:
   printf("%s:%d:%s: delivering SDU (rnti %d is_srb %d rb_id %d) size %d [",
          __FILE__, __LINE__, __FUNCTION__, ue->rnti, is_srb, rb_id, size);
   for (int i = 0; i < size; i++) printf(" %2.2x", (unsigned char)buf[i]);
@@ -303,6 +327,12 @@ static void add_srb(int rnti, struct LTE_SRB_ToAddMod *s)
   int poll_pdu;
   int poll_byte;
   int max_retx_threshold;
+
+  if (srb_id != 1 && srb_id != 2) {
+    printf("%s:%d:%s: fatal, bad srb id %d\n",
+           __FILE__, __LINE__, __FUNCTION__, srb_id);
+    exit(1);
+  }
 
   switch (l->present) {
   case LTE_SRB_ToAddMod__logicalChannelConfig_PR_explicitValue:
@@ -356,13 +386,103 @@ static void add_srb(int rnti, struct LTE_SRB_ToAddMod *s)
 
   rlc_manager_lock(rlc_ue_manager);
   ue = rlc_manager_get_ue(rlc_ue_manager, rnti);
-  rlc_am = new_rlc_entity_am(100000,
-                             100000,
-                             deliver_sdu, ue,
-                             t_reordering, t_status_prohibit, t_poll_retransmit,
-                             poll_pdu, poll_byte, max_retx_threshold);
-  rlc_ue_add_srb_rlc_entity(ue, srb_id, rlc_am);
+  if (ue->srb[srb_id-1] != NULL) {
+    printf("%s:%d:%s: warning SRB %d already exist for ue %d, do nothing\n",
+           __FILE__, __LINE__, __FUNCTION__, srb_id, rnti);
+  } else {
+    rlc_am = new_rlc_entity_am(100000,
+                               100000,
+                               deliver_sdu, ue,
+                               t_reordering, t_status_prohibit,
+                               t_poll_retransmit,
+                               poll_pdu, poll_byte, max_retx_threshold);
+    rlc_ue_add_srb_rlc_entity(ue, srb_id, rlc_am);
+
+    printf("%s:%d:%s: added srb %d to ue %d\n",
+           __FILE__, __LINE__, __FUNCTION__, srb_id, rnti);
+  }
   rlc_manager_unlock(rlc_ue_manager);
+}
+
+static void add_drb_am(int rnti, struct LTE_DRB_ToAddMod *s)
+{
+  rlc_entity_t            *rlc_am;
+  rlc_ue_t                *ue;
+
+  struct LTE_RLC_Config *r = s->rlc_Config;
+  struct LTE_LogicalChannelConfig *l = s->logicalChannelConfig;
+  int drb_id = s->drb_Identity;
+  int logical_channel_group;
+
+  int t_reordering;
+  int t_status_prohibit;
+  int t_poll_retransmit;
+  int poll_pdu;
+  int poll_byte;
+  int max_retx_threshold;
+
+  if (!(drb_id >= 1 && drb_id <= 5)) {
+    printf("%s:%d:%s: fatal, bad srb id %d\n",
+           __FILE__, __LINE__, __FUNCTION__, drb_id);
+    exit(1);
+  }
+
+  logical_channel_group = *l->ul_SpecificParameters->logicalChannelGroup;
+
+  /* TODO: accept other values? */
+  if (logical_channel_group != 1) {
+    printf("%s:%d:%s: fatal error\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  switch (r->present) {
+  case LTE_RLC_Config_PR_am: {
+    struct LTE_RLC_Config__am *am;
+    am = &r->choice.am;
+    t_reordering       = decode_t_reordering(am->dl_AM_RLC.t_Reordering);
+    t_status_prohibit  = decode_t_status_prohibit(am->dl_AM_RLC.t_StatusProhibit);
+    t_poll_retransmit  = decode_t_poll_retransmit(am->ul_AM_RLC.t_PollRetransmit);
+    poll_pdu           = decode_poll_pdu(am->ul_AM_RLC.pollPDU);
+    poll_byte          = decode_poll_byte(am->ul_AM_RLC.pollByte);
+    max_retx_threshold = decode_max_retx_threshold(am->ul_AM_RLC.maxRetxThreshold);
+    break;
+  }
+  default:
+    printf("%s:%d:%s: fatal error\n", __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
+
+  rlc_manager_lock(rlc_ue_manager);
+  ue = rlc_manager_get_ue(rlc_ue_manager, rnti);
+  if (ue->drb[drb_id-1] != NULL) {
+    printf("%s:%d:%s: warning DRB %d already exist for ue %d, do nothing\n",
+           __FILE__, __LINE__, __FUNCTION__, drb_id, rnti);
+  } else {
+    rlc_am = new_rlc_entity_am(100000,
+                               100000,
+                               deliver_sdu, ue,
+                               t_reordering, t_status_prohibit,
+                               t_poll_retransmit,
+                               poll_pdu, poll_byte, max_retx_threshold);
+    rlc_ue_add_drb_rlc_entity(ue, drb_id, rlc_am);
+
+    printf("%s:%d:%s: added drb %d to ue %d\n",
+           __FILE__, __LINE__, __FUNCTION__, drb_id, rnti);
+  }
+  rlc_manager_unlock(rlc_ue_manager);
+}
+
+static void add_drb(int rnti, struct LTE_DRB_ToAddMod *s)
+{
+  switch (s->rlc_Config->present) {
+  case LTE_RLC_Config_PR_am:
+    add_drb_am(rnti, s);
+    break;
+  default:
+    printf("%s:%d:%s: fatal: unhandled DRB type\n",
+           __FILE__, __LINE__, __FUNCTION__);
+    exit(1);
+  }
 }
 
 rlc_op_status_t rrc_rlc_config_asn1_req (const protocol_ctxt_t   * const ctxt_pP,
@@ -404,8 +524,9 @@ ctxt_pP->enb_flag , ctxt_pP->module_id, ctxt_pP->instance, ctxt_pP->eNB_index, c
   }
 
   if (drb2add_listP != NULL) {
-    printf("%s:%d:%s: TODO\n", __FILE__, __LINE__, __FUNCTION__);
-    exit(1);
+    for (i = 0; i < drb2add_listP->list.count; i++) {
+      add_drb(rnti, drb2add_listP->list.array[i]);
+    }
   }
 
   return RLC_OP_STATUS_OK;
