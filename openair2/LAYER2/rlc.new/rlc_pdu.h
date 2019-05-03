@@ -5,29 +5,24 @@
 /* RX PDU segment and segment list                                        */
 /**************************************************************************/
 
-typedef struct {
+typedef struct rlc_rx_pdu_segment_t {
   int sn;
   int so;
   int size;
   int is_last;
   char *data;
   int data_offset;
-} rlc_pdu_segment_t;
+  struct rlc_rx_pdu_segment_t *next;
+} rlc_rx_pdu_segment_t;
 
-typedef struct rlc_pdu_segment_list_t {
-  struct rlc_pdu_segment_list_t *prev;
-  struct rlc_pdu_segment_list_t *next;
-  rlc_pdu_segment_t *s;
-} rlc_pdu_segment_list_t;
-
-rlc_pdu_segment_t *rlc_new_pdu_segment(int sn, int so, int size,
+rlc_rx_pdu_segment_t *rlc_rx_new_pdu_segment(int sn, int so, int size,
     int is_last, char *data, int data_offset);
 
-void rlc_free_pdu_segment(rlc_pdu_segment_t *pdu_segment);
+void rlc_rx_free_pdu_segment(rlc_rx_pdu_segment_t *pdu_segment);
 
-rlc_pdu_segment_list_t *rlc_pdu_segment_list_add(
+rlc_rx_pdu_segment_t *rlc_rx_pdu_segment_list_add(
     int (*sn_compare)(void *, int, int), void *sn_compare_data,
-    rlc_pdu_segment_list_t *list, rlc_pdu_segment_t *pdu_segment);
+    rlc_rx_pdu_segment_t *list, rlc_rx_pdu_segment_t *pdu_segment);
 
 /**************************************************************************/
 /* TX PDU management                                                      */

@@ -179,14 +179,14 @@
  */
 
 typedef struct {
-  rlc_pdu_segment_list_t *start;      /* start of list */
-  rlc_pdu_segment_list_t *end;        /* end of list (last element) */
-  int                    pos;         /* byte to get from current buffer */
-  char                   sdu[SDU_MAX]; /* sdu is reassembled here */
-  int                    sdu_pos;      /* next byte to put in sdu */
+  rlc_rx_pdu_segment_t *start;      /* start of list */
+  rlc_rx_pdu_segment_t *end;        /* end of list (last element) */
+  int                  pos;         /* byte to get from current buffer */
+  char                 sdu[SDU_MAX]; /* sdu is reassembled here */
+  int                  sdu_pos;      /* next byte to put in sdu */
 
   /* decoder of current PDU */
-  rlc_pdu_decoder_t      dec;
+  rlc_pdu_decoder_t    dec;
   int fi;
   int e;
   int sn;
@@ -229,9 +229,9 @@ typedef struct {
   uint64_t t_poll_retransmit_start;
 
   /* rx management */
-  rlc_pdu_segment_list_t *rx_list;
-  int                    rx_size;
-  int                    rx_maxsize;
+  rlc_rx_pdu_segment_t *rx_list;
+  int                  rx_size;
+  int                  rx_maxsize;
 
   /* reassembly management */
   rlc_am_reassemble_t    reassemble;

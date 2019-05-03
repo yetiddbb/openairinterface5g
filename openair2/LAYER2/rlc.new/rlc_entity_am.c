@@ -51,11 +51,11 @@ static int segment_already_received(rlc_entity_am_t *entity,
     int sn, int so, int data_size)
 {
   /* TODO: optimize */
-  rlc_pdu_segment_list_t *l = entity->rx_list;
+  rlc_rx_pdu_segment_t *l = entity->rx_list;
 
   while (l != NULL) {
-    if (l->s->sn == sn && l->s->so <= so &&
-        l->s->so + l->s->size - l->s->data_offset >= so + data_size)
+    if (l->sn == sn && l->so <= so &&
+        l->so + l->size - l->data_offset >= so + data_size)
       return 1;
     l = l->next;
   }
@@ -65,19 +65,19 @@ static int segment_already_received(rlc_entity_am_t *entity,
 
 static int rlc_am_segment_full(rlc_entity_am_t *entity, int sn)
 {
-  rlc_pdu_segment_list_t *l = entity->rx_list;
+  rlc_rx_pdu_segment_t *l = entity->rx_list;
   int last_byte;
   int new_last_byte;
 
   last_byte = -1;
   while (l != NULL) {
-    if (l->s->sn == sn) break;
+    if (l->sn == sn) break;
     l = l->next;
   }
-  while (l != NULL && l->s->sn == sn) {
-    if (l->s->so > last_byte + 1) return 0;
-    if (l->s->is_last) return 1;
-    new_last_byte = l->s->so + l->s->size - l->s->data_offset - 1;
+  while (l != NULL && l->sn == sn) {
+    if (l->so > last_byte + 1) return 0;
+    if (l->is_last) return 1;
+    new_last_byte = l->so + l->size - l->data_offset - 1;
     if (new_last_byte > last_byte)
       last_byte = new_last_byte;
     l = l->next;
@@ -91,9 +91,9 @@ static int rlc_am_reassemble_next_segment(rlc_am_reassemble_t *r)
   int rf;
   int sn;
 
-  r->sdu_offset = r->start->s->data_offset;
+  r->sdu_offset = r->start->data_offset;
 
-  rlc_pdu_decoder_init(&r->dec, r->start->s->data, r->start->s->size);
+  rlc_pdu_decoder_init(&r->dec, r->start->data, r->start->size);
 
   rlc_pdu_decoder_get_bits(&r->dec, 1);            /* dc */
   rf    = rlc_pdu_decoder_get_bits(&r->dec, 1);
@@ -112,7 +112,7 @@ static int rlc_am_reassemble_next_segment(rlc_am_reassemble_t *r)
     r->e       = rlc_pdu_decoder_get_bits(&r->dec, 1);
     r->sdu_len = rlc_pdu_decoder_get_bits(&r->dec, 11);
   } else
-    r->sdu_len = r->start->s->size - r->sdu_offset;
+    r->sdu_len = r->start->size - r->sdu_offset;
 
   /* new sn: read starts from PDU byte 0 */
   if (sn != r->sn) {
@@ -120,7 +120,7 @@ static int rlc_am_reassemble_next_segment(rlc_am_reassemble_t *r)
     r->sn = sn;
   }
 
-  r->data_pos = r->start->s->data_offset + r->pdu_byte - r->so;
+  r->data_pos = r->start->data_offset + r->pdu_byte - r->so;
 
   /* TODO: remove this check, it is useless, data has been validated before */
   if (r->pdu_byte < r->so) {
@@ -131,17 +131,17 @@ static int rlc_am_reassemble_next_segment(rlc_am_reassemble_t *r)
   /* if pdu_byte is not in [so .. so+len-1] then all bytes from this segment
    * have already been consumed
    */
-  if (r->pdu_byte >= r->so + r->start->s->size - r->start->s->data_offset)
+  if (r->pdu_byte >= r->so + r->start->size - r->start->data_offset)
     return 0;
 
   /* go to correct SDU */
-  while (r->pdu_byte >= r->so + (r->sdu_offset - r->start->s->data_offset) + r->sdu_len) {
+  while (r->pdu_byte >= r->so + (r->sdu_offset - r->start->data_offset) + r->sdu_len) {
     r->sdu_offset += r->sdu_len;
     if (r->e) {
       r->e       = rlc_pdu_decoder_get_bits(&r->dec, 1);
       r->sdu_len = rlc_pdu_decoder_get_bits(&r->dec, 11);
     } else {
-      r->sdu_len = r->start->s->size - r->sdu_offset;
+      r->sdu_len = r->start->size - r->sdu_offset;
     }
   }
 
@@ -160,7 +160,7 @@ static void rlc_am_reassemble(rlc_entity_am_t *entity)
       printf("%s:%d:%s: bad RLC PDU\n", __FILE__, __LINE__, __FUNCTION__);
       exit(1);
     }
-    r->sdu[r->sdu_pos] = r->start->s->data[r->data_pos];
+    r->sdu[r->sdu_pos] = r->start->data[r->data_pos];
     r->sdu_pos++;
     r->data_pos++;
     r->pdu_byte++;
@@ -169,31 +169,30 @@ static void rlc_am_reassemble(rlc_entity_am_t *entity)
        * It is if the data pointer is not at the end of the PDU segment
        * or if 'fi' & 1 == 0
        */
-      if (r->data_pos != r->start->s->size || (r->fi & 1) == 0) {
+      if (r->data_pos != r->start->size || (r->fi & 1) == 0) {
         /* SDU is full - deliver to higher layer */
         entity->common.deliver_sdu(entity->common.deliver_sdu_data,
                                    (rlc_entity_t *)entity,
                                    r->sdu, r->sdu_pos);
         r->sdu_pos = 0;
       }
-      if (r->data_pos != r->start->s->size) {
+      if (r->data_pos != r->start->size) {
         /* not at the end, process next SDU */
         r->sdu_offset += r->sdu_len;
         if (r->e) {
           r->e       = rlc_pdu_decoder_get_bits(&r->dec, 1);
           r->sdu_len = rlc_pdu_decoder_get_bits(&r->dec, 11);
         } else
-          r->sdu_len = r->start->s->size - r->sdu_offset;
+          r->sdu_len = r->start->size - r->sdu_offset;
       } else {
         /* all bytes are consumend, go to next segment not already fully
          * processed, if any
          */
         do {
-          rlc_pdu_segment_list_t *e = r->start;
-          entity->rx_size -= e->s->size;
+          rlc_rx_pdu_segment_t *e = r->start;
+          entity->rx_size -= e->size;
           r->start = r->start->next;
-          rlc_free_pdu_segment(e->s);
-          free(e);
+          rlc_rx_free_pdu_segment(e);
         } while (r->start != NULL && !rlc_am_reassemble_next_segment(r));
       }
     }
@@ -201,7 +200,7 @@ static void rlc_am_reassemble(rlc_entity_am_t *entity)
 }
 
 static void rlc_am_reception_actions(rlc_entity_am_t *entity,
-    rlc_pdu_segment_t *pdu_segment)
+    rlc_rx_pdu_segment_t *pdu_segment)
 {
   int x = pdu_segment->sn;
   int vr_ms;
@@ -221,8 +220,8 @@ static void rlc_am_reception_actions(rlc_entity_am_t *entity,
     vr_r = entity->vr_r;
     while (rlc_am_segment_full(entity, vr_r)) {
       /* move segments with sn=vr(r) from rx list to end of reassembly list */
-      while (entity->rx_list != NULL && entity->rx_list->s->sn == vr_r) {
-        rlc_pdu_segment_list_t *e = entity->rx_list;
+      while (entity->rx_list != NULL && entity->rx_list->sn == vr_r) {
+        rlc_rx_pdu_segment_t *e = entity->rx_list;
         entity->rx_list = e->next;
         e->next = NULL;
         if (entity->reassemble.start == NULL) {
@@ -452,7 +451,7 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   int data_start;
   int indicated_data_size;
 
-  rlc_pdu_segment_t *pdu_segment;
+  rlc_rx_pdu_segment_t *pdu_segment;
 
   printf("got packet length %d\n", size);
   for (i = 0; i < size; i++) printf("%2.2x ", (unsigned char)buffer[i]);
@@ -545,9 +544,9 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
 
   /* put in pdu reception list */
   entity->rx_size += size;
-  pdu_segment = rlc_new_pdu_segment(sn, so, size, lsf, buffer, data_start);
-  entity->rx_list = rlc_pdu_segment_list_add(sn_compare_rx, entity,
-                                             entity->rx_list, pdu_segment);
+  pdu_segment = rlc_rx_new_pdu_segment(sn, so, size, lsf, buffer, data_start);
+  entity->rx_list = rlc_rx_pdu_segment_list_add(sn_compare_rx, entity,
+                                                entity->rx_list, pdu_segment);
 
   /* do reception actions (36.322 5.1.3.2.3) */
   rlc_am_reception_actions(entity, pdu_segment);
