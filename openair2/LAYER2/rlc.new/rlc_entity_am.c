@@ -359,8 +359,9 @@ static void process_received_nack(rlc_entity_am_t *entity, int sn,
    * source lists are ack list and wait list.
    * Not sure if we should consider wait list, isn't the other end supposed
    * to only NACK SNs lower than the ACK SN sent in the status PDU, in which
-   * case all potential PDU segments should all be in ack list? in doubt
-   * let's accept anything and thus process also wait list.
+   * case all potential PDU segments should all be in ack list when calling
+   * the current function? in doubt let's accept anything and thus process
+   * also wait list.
    */
   rlc_tx_pdu_segment_t head;
   rlc_tx_pdu_segment_t *cur;
