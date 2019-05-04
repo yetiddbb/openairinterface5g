@@ -271,7 +271,6 @@ static void process_received_ack(rlc_entity_am_t *entity, int sn)
   rlc_tx_pdu_segment_t *prev;
 
   /* put all PDUs from wait and retransmit lists with SN < 'sn' to ack_list */
-  entity->ack_list = NULL;
 
   /* process wait list */
   head.next = entity->wait_list;
@@ -279,14 +278,11 @@ static void process_received_ack(rlc_entity_am_t *entity, int sn)
   cur = entity->wait_list;
   while (cur != NULL) {
     if (sn_compare_tx(entity, cur->sn, sn) < 0) {
-      /* dec. retx_count in case we put this segment in retransmit list in
-       * 'process_received_nack'
-       */
-      cur->retx_count--;
-      /* put the PDU in the ack list */
+      /* remove from wait list */
       prev->next = cur->next;
-      cur->next = entity->ack_list;
-      entity->ack_list = cur;
+      /* put the PDU in the ack list */
+      entity->ack_list = rlc_tx_pdu_list_add(sn_compare_tx, entity,
+                                             entity->ack_list, cur);
       cur = prev->next;
     } else {
       prev = cur;
@@ -305,10 +301,11 @@ static void process_received_ack(rlc_entity_am_t *entity, int sn)
        * in 'process_received_nack'
        */
       cur->retx_count--;
-      /* put the PDU in the ack list */
+      /* remove from retransmit list */
       prev->next = cur->next;
-      cur->next = entity->ack_list;
-      entity->ack_list = cur;
+      /* put the PDU in the ack list */
+      entity->ack_list = rlc_tx_pdu_list_add(sn_compare_tx, entity,
+                                             entity->ack_list, cur);
       cur = prev->next;
     } else {
       prev = cur;
@@ -324,19 +321,22 @@ static void consider_retransmission(rlc_entity_am_t *entity,
 {
   cur->retx_count++;
 
+  /* let's report max RETX reached for all retx_count >= max_retx_threshold
+   * (specs say to report if retx_count == max_retx_threshold).
+   * Upper layers should react (radio link failure), so no big deal actually.
+   */
+  if (cur->retx_count >= entity->max_retx_threshold) {
+    entity->common.max_retx_reached(entity->common.max_retx_reached_data,
+                                    (rlc_entity_t *)entity);
+  }
+
   /* let's put in retransmit list even if we are over max_retx_threshold.
    * upper layers should deal with this condition, internally it's better
    * for the RLC code to keep going with this segment (we only remove
    * a segment that was ACKed)
    */
-  if (cur->retx_count >= entity->max_retx_threshold) {
-    printf("%s:%d:%s: todo: radio link failure to report to upper layer\n",
-           __FILE__, __LINE__, __FUNCTION__);
-    exit(1);
-  }
-
   entity->retransmit_list = rlc_tx_pdu_list_add(sn_compare_tx, entity,
-      entity->retransmit_list, cur);
+                                                entity->retransmit_list, cur);
 }
 
 static int so_overlap(int s1, int e1, int s2, int e2)
@@ -411,8 +411,141 @@ static void process_received_nack(rlc_entity_am_t *entity, int sn,
   entity->ack_list = head.next;
 }
 
+int tx_pdu_in_ack_list_full(rlc_tx_pdu_segment_t *pdu)
+{
+  int sn = pdu->sn;
+  int last_byte = -1;
+  int new_last_byte;
+  int is_last_seen = 0;
+
+  while (pdu != NULL && pdu->sn == sn) {
+    if (pdu->so > last_byte + 1) return 0;
+    if (pdu->is_last)
+      is_last_seen = 1;
+    new_last_byte = pdu->so + pdu->data_size - 1;
+    if (new_last_byte > last_byte)
+      last_byte = new_last_byte;
+    pdu = pdu->next;
+  }
+
+  return is_last_seen == 1;
+}
+
+int tx_pdu_in_ack_list_size(rlc_tx_pdu_segment_t *pdu)
+{
+  int sn = pdu->sn;
+  int ret = 0;
+
+  while (pdu != NULL && pdu->sn == sn) {
+    ret += pdu->data_size;
+    pdu = pdu->next;
+  }
+
+  return ret;
+}
+
+void ack_sdu_bytes(rlc_sdu_t *start, int start_byte, int sdu_size)
+{
+  rlc_sdu_t *cur = start;
+  int remaining_size = sdu_size;
+
+  while (remaining_size) {
+    int cursize = cur->size - start_byte;
+    if (cursize > remaining_size)
+      cursize = remaining_size;
+    cur->acked_bytes += cursize;
+    remaining_size -= cursize;
+    /* start_byte is only meaningful for the 1st SDU, then it is 0 */
+    start_byte = 0;
+    cur = cur->next;
+  }
+}
+
+rlc_tx_pdu_segment_t *tx_list_remove_sn(rlc_tx_pdu_segment_t *list, int sn)
+{
+  rlc_tx_pdu_segment_t head;
+  rlc_tx_pdu_segment_t *cur;
+  rlc_tx_pdu_segment_t *prev;
+
+  head.next = list;
+  cur = list;
+  prev = &head;
+
+  while (cur != NULL) {
+    if (cur->sn == sn) {
+      prev->next = cur->next;
+      rlc_tx_free_pdu(cur);
+      cur = prev->next;
+    } else {
+      prev = cur;
+      cur = cur->next;
+    }
+  }
+
+  return head.next;
+}
+
+void cleanup_sdu_list(rlc_entity_am_t *entity)
+{
+  rlc_sdu_t head;
+  rlc_sdu_t *cur;
+  rlc_sdu_t *prev;
+
+  /* remove fully acked SDUs, indicate successful delivery to upper layer */
+  head.next = entity->tx_list;
+  cur = entity->tx_list;
+  prev = &head;
+
+  while (cur != NULL) {
+    if (cur->acked_bytes == cur->size) {
+      prev->next = cur->next;
+      entity->tx_size -= cur->size;
+      entity->common.sdu_successful_delivery(
+          entity->common.sdu_successful_delivery_data,
+          (rlc_entity_t *)entity, cur->upper_layer_id);
+      rlc_free_sdu(cur);
+      entity->tx_end = prev;
+      cur = prev->next;
+    } else {
+      entity->tx_end = cur;
+      cur = cur->next;
+    }
+  }
+
+  entity->tx_list = head.next;
+
+  /* if tx_end == head then it means that the list is now empty */
+  if (entity->tx_end == &head)
+    entity->tx_end = NULL;
+}
+
 static void finalize_ack_nack_processing(rlc_entity_am_t *entity)
 {
+  int sn;
+  rlc_tx_pdu_segment_t *cur = entity->ack_list;
+  int pdu_size;
+
+  if (cur == NULL)
+    return;
+
+  /* remove full PDUs in ack list and ack SDU bytes they cover */
+  while (cur != NULL) {
+    sn = cur->sn;
+    if (tx_pdu_in_ack_list_full(cur)) {
+      if (cur->sn == entity->vt_a)
+        entity->vt_a = (entity->vt_a + 1) % 1024;
+      pdu_size = tx_pdu_in_ack_list_size(cur);
+      ack_sdu_bytes(cur->start_sdu, cur->sdu_start_byte, pdu_size);
+      while (cur != NULL && cur->sn == sn)
+        cur = cur->next;
+      entity->ack_list = tx_list_remove_sn(entity->ack_list, sn);
+    } else {
+      while (cur != NULL && cur->sn == sn)
+        cur = cur->next;
+    }
+  }
+
+  cleanup_sdu_list(entity);
 }
 
 void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
@@ -946,7 +1079,12 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
 
   pdu->so = 0;
   pdu->is_segment = 0;
-  pdu->retx_count = 0;
+  pdu->is_last = 1;
+  /* to conform to sepcs' logic, put -1 (specs say "for 1st retransmission
+   * put 0 otherwise increase", let's put -1 and always increase when the
+   * segment goes to retransmit list)
+   */
+  pdu->retx_count = -1;
 
   /* reserve SDU bytes */
   cursize = 0;
@@ -1147,7 +1285,8 @@ int rlc_entity_am_generate_pdu(rlc_entity_t *_entity, char *buffer, int size)
 /* SDU RX functions                                                      */
 /*************************************************************************/
 
-void rlc_entity_am_recv_sdu(rlc_entity_t *_entity, char *buffer, int size)
+void rlc_entity_am_recv_sdu(rlc_entity_t *_entity, char *buffer, int size,
+                            int sdu_id)
 {
   rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   rlc_sdu_t *sdu;
@@ -1166,6 +1305,6 @@ void rlc_entity_am_recv_sdu(rlc_entity_t *_entity, char *buffer, int size)
 
   entity->tx_size += size;
 
-  sdu = rlc_new_sdu(buffer, size);
+  sdu = rlc_new_sdu(buffer, size, sdu_id);
   rlc_sdu_list_add(&entity->tx_list, &entity->tx_end, sdu);
 }

@@ -16,12 +16,22 @@ typedef struct rlc_entity_t {
       struct rlc_entity_t *entity, int maxsize);
   int (*generate_pdu)(struct rlc_entity_t *entity, char *buffer, int size);
 
-  void (*recv_sdu)(struct rlc_entity_t *entity, char *buffer, int size);
+  void (*recv_sdu)(struct rlc_entity_t *entity, char *buffer, int size,
+                   int sdu_id);
 
   /* callbacks provided to the RLC module */
   void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
                       char *buf, int size);
   void *deliver_sdu_data;
+
+  void (*sdu_successful_delivery)(void *sdu_successful_delivery_data,
+                                  struct rlc_entity_t *entity,
+                                  int sdu_id);
+  void *sdu_successful_delivery_data;
+
+  void (*max_retx_reached)(void *max_retx_reached_data,
+                           struct rlc_entity_t *entity);
+  void *max_retx_reached_data;
 
   /* set to the latest know time. Unit: ms */
   uint64_t t_current;
@@ -33,6 +43,13 @@ rlc_entity_t *new_rlc_entity_am(
     void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
                       char *buf, int size),
     void *deliver_sdu_data,
+    void (*sdu_successful_delivery)(void *sdu_successful_delivery_data,
+                                    struct rlc_entity_t *entity,
+                                    int sdu_id),
+    void *sdu_successful_delivery_data,
+    void (*max_retx_reached)(void *max_retx_reached_data,
+                             struct rlc_entity_t *entity),
+    void *max_retx_reached_data,
     int t_reordering,
     int t_status_prohibit,
     int t_poll_retransmit,

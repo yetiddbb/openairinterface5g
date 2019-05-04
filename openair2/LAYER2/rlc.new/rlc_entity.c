@@ -11,6 +11,13 @@ rlc_entity_t *new_rlc_entity_am(
     void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
                       char *buf, int size),
     void *deliver_sdu_data,
+    void (*sdu_successful_delivery)(void *sdu_successful_delivery_data,
+                                    struct rlc_entity_t *entity,
+                                    int sdu_id),
+    void *sdu_successful_delivery_data,
+    void (*max_retx_reached)(void *max_retx_reached_data,
+                             struct rlc_entity_t *entity),
+    void *max_retx_reached_data,
     int t_reordering,
     int t_status_prohibit,
     int t_poll_retransmit,
@@ -34,6 +41,12 @@ rlc_entity_t *new_rlc_entity_am(
 
   ret->common.deliver_sdu      = deliver_sdu;
   ret->common.deliver_sdu_data = deliver_sdu_data;
+
+  ret->common.sdu_successful_delivery      = sdu_successful_delivery;
+  ret->common.sdu_successful_delivery_data = sdu_successful_delivery_data;
+
+  ret->common.max_retx_reached      = max_retx_reached;
+  ret->common.max_retx_reached_data = max_retx_reached_data;
 
   ret->rx_maxsize         = rx_maxsize;
   ret->tx_maxsize         = tx_maxsize;

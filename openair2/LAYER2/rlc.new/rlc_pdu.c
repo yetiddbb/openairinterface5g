@@ -79,6 +79,7 @@ rlc_tx_pdu_segment_t *rlc_tx_new_pdu(void)
     printf("%s:%d:%s: out of memory\n", __FILE__, __LINE__, __FUNCTION__);
     exit(1);
   }
+  ret->retx_count = -1;
   return ret;
 }
 

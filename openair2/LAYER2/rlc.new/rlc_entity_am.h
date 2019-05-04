@@ -248,7 +248,8 @@ typedef struct {
   rlc_tx_pdu_segment_t *ack_list;
 } rlc_entity_am_t;
 
-void rlc_entity_am_recv_sdu(rlc_entity_t *entity, char *buffer, int size);
+void rlc_entity_am_recv_sdu(rlc_entity_t *entity, char *buffer, int size,
+                            int sdu_id);
 void rlc_entity_am_recv_pdu(rlc_entity_t *entity, char *buffer, int size);
 rlc_entity_buffer_status_t rlc_entity_am_buffer_status(
     rlc_entity_t *entity, int maxsize);

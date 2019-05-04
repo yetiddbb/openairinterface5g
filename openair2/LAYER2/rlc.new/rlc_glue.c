@@ -209,7 +209,7 @@ rlc_op_status_t rlc_data_req     (const protocol_ctxt_t *const ctxt_pP,
 
   if (rb != NULL) {
     rb->t_current = rlc_current_time;
-    rb->recv_sdu(rb, (char *)sdu_pP->data, sdu_sizeP);
+    rb->recv_sdu(rb, (char *)sdu_pP->data, sdu_sizeP, muiP);
   } else {
     printf("%s:%d:%s: fatal: SDU sent to unknown RB\n", __FILE__, __LINE__, __FUNCTION__);
     exit(1);
@@ -311,6 +311,76 @@ rb_found:
   }
 }
 
+static void successful_delivery(void *_ue, rlc_entity_t *entity, int sdu_id)
+{
+  rlc_ue_t *ue = _ue;
+  int is_srb;
+  int rb_id;
+
+  /* is it SRB? */
+  for (i = 0; i < 2; i++) {
+    if (entity == ue->srb[i]) {
+      is_srb = 1;
+      rb_id = i+1;
+      goto rb_found;
+    }
+  }
+
+  /* maybe DRB? */
+  for (i = 0; i < 5; i++) {
+    if (entity == ue->drb[i]) {
+      is_srb = 0;
+      rb_id = i+1;
+      goto rb_found;
+    }
+  }
+
+  printf("%s:%d:%s: fatal, no RB found for ue %d\n",
+         __FILE__, __LINE__, __FUNCTION__, ue->rnti);
+  exit(1);
+
+rb_found:
+  /* TODO: do something? */
+  printf("sdu %d was successfully delivered on %s %d\n",
+         is_srb ? "SRB" : "DRB",
+         rb_id);
+}
+
+static void max_retx_reached(void *_ue, rlc_entity_t *entity)
+{
+  rlc_ue_t *ue = _ue;
+  int is_srb;
+  int rb_id;
+
+  /* is it SRB? */
+  for (i = 0; i < 2; i++) {
+    if (entity == ue->srb[i]) {
+      is_srb = 1;
+      rb_id = i+1;
+      goto rb_found;
+    }
+  }
+
+  /* maybe DRB? */
+  for (i = 0; i < 5; i++) {
+    if (entity == ue->drb[i]) {
+      is_srb = 0;
+      rb_id = i+1;
+      goto rb_found;
+    }
+  }
+
+  printf("%s:%d:%s: fatal, no RB found for ue %d\n",
+         __FILE__, __LINE__, __FUNCTION__, ue->rnti);
+  exit(1);
+
+rb_found:
+  /* TODO: signal radio link failure to RRC */
+  printf("max RETX reached on %s %d\n",
+         is_srb ? "SRB" : "DRB",
+         rb_id);
+}
+
 static void add_srb(int rnti, struct LTE_SRB_ToAddMod *s)
 {
   rlc_entity_t            *rlc_am;
@@ -393,6 +463,8 @@ static void add_srb(int rnti, struct LTE_SRB_ToAddMod *s)
     rlc_am = new_rlc_entity_am(100000,
                                100000,
                                deliver_sdu, ue,
+                               successful_delivery, ue,
+                               max_retx_reached, ue,
                                t_reordering, t_status_prohibit,
                                t_poll_retransmit,
                                poll_pdu, poll_byte, max_retx_threshold);
@@ -458,9 +530,11 @@ static void add_drb_am(int rnti, struct LTE_DRB_ToAddMod *s)
     printf("%s:%d:%s: warning DRB %d already exist for ue %d, do nothing\n",
            __FILE__, __LINE__, __FUNCTION__, drb_id, rnti);
   } else {
-    rlc_am = new_rlc_entity_am(100000,
-                               100000,
+    rlc_am = new_rlc_entity_am(1000000,
+                               1000000,
                                deliver_sdu, ue,
+                               successful_delivery, ue,
+                               max_retx_reached, ue,
                                t_reordering, t_status_prohibit,
                                t_poll_retransmit,
                                poll_pdu, poll_byte, max_retx_threshold);

@@ -35,6 +35,7 @@ typedef struct rlc_tx_pdu_segment_t {
   int       so;                /* starting byte of the segment in full PDU */
   int       data_size;         /* number of data bytes (exclude header) */
   int       is_segment;
+  int       is_last;
   int       retx_count;
   struct rlc_tx_pdu_segment_t *next;
 } rlc_tx_pdu_segment_t;
