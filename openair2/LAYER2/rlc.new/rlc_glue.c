@@ -314,6 +314,7 @@ rb_found:
 static void successful_delivery(void *_ue, rlc_entity_t *entity, int sdu_id)
 {
   rlc_ue_t *ue = _ue;
+  int i;
   int is_srb;
   int rb_id;
 
@@ -342,6 +343,7 @@ static void successful_delivery(void *_ue, rlc_entity_t *entity, int sdu_id)
 rb_found:
   /* TODO: do something? */
   printf("sdu %d was successfully delivered on %s %d\n",
+         sdu_id,
          is_srb ? "SRB" : "DRB",
          rb_id);
 }
@@ -349,6 +351,7 @@ rb_found:
 static void max_retx_reached(void *_ue, rlc_entity_t *entity)
 {
   rlc_ue_t *ue = _ue;
+  int i;
   int is_srb;
   int rb_id;
 
