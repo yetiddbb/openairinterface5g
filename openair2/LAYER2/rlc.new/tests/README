@@ -1,0 +1,13 @@
+To run tests, simply type: make
+
+Each test is made of:
+  test.c      program of the test
+  test.txt    expected output of the test
+
+At runtime, we generate:
+  test.run    actual output of the test
+
+Only the output lines starting with "TEST" are taken into account.
+
+The Makefile stops on the first actual output differing from the
+expected output.

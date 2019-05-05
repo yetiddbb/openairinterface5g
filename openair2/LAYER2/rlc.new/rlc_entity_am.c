@@ -647,7 +647,7 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   data_size = size - data_start;
 
   if (data_size <= 0) {
-    printf("%s:%d:%s: warning: discard PDU, wrong data size (%d data size %d)\n",
+    printf("%s:%d:%s: warning: discard PDU, wrong data size (sum of LI %d data size %d)\n",
            __FILE__, __LINE__, __FUNCTION__,
            indicated_data_size, data_size);
     goto discard;
@@ -1098,6 +1098,8 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
     sdu->next_byte += sdu_size;
     cursize += sdu_size;
   }
+
+  pdu->data_size = cursize;
 
   /* generate header */
   rlc_pdu_encoder_init(&encoder, buffer, bufsize);
