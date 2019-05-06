@@ -19,6 +19,8 @@ typedef struct rlc_entity_t {
   void (*recv_sdu)(struct rlc_entity_t *entity, char *buffer, int size,
                    int sdu_id);
 
+  void (*set_time)(struct rlc_entity_t *entity, uint64_t now);
+
   /* callbacks provided to the RLC module */
   void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
                       char *buf, int size);
@@ -32,9 +34,6 @@ typedef struct rlc_entity_t {
   void (*max_retx_reached)(void *max_retx_reached_data,
                            struct rlc_entity_t *entity);
   void *max_retx_reached_data;
-
-  /* set to the latest know time. Unit: ms */
-  uint64_t t_current;
 } rlc_entity_t;
 
 rlc_entity_t *new_rlc_entity_am(

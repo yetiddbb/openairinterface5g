@@ -5,13 +5,15 @@
  */
 
 #include "rlc_entity.h"
+#include "rlc_entity_am.h"
 
 #include <stdio.h>
 #include <inttypes.h>
 
-void deliver_sdu_enb(void *deliver_sdu_data, struct rlc_entity_t *entity,
+void deliver_sdu_enb(void *deliver_sdu_data, struct rlc_entity_t *_entity,
                      char *buf, int size)
 {
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   printf("TEST: ENB: %"PRIu64": deliver SDU size %d [",
          entity->t_current, size);
   for (int i = 0; i < size; i++) printf(" %2.2x", (unsigned char)buf[i]);
@@ -19,21 +21,24 @@ void deliver_sdu_enb(void *deliver_sdu_data, struct rlc_entity_t *entity,
 }
 
 void successful_delivery_enb(void *successful_delivery_data,
-                             rlc_entity_t *entity, int sdu_id)
+                             rlc_entity_t *_entity, int sdu_id)
 {
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   printf("TEST: ENB: %"PRIu64": SDU %d was successfully delivered.\n",
          entity->t_current, sdu_id);
 }
 
-void max_retx_reached_enb(void *max_retx_reached_data, rlc_entity_t *entity)
+void max_retx_reached_enb(void *max_retx_reached_data, rlc_entity_t *_entity)
 {
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   printf("TEST: ENB: %"PRIu64": max RETX reached! radio link failure!\n",
          entity->t_current);
 }
 
-void deliver_sdu_ue(void *deliver_sdu_data, struct rlc_entity_t *entity,
+void deliver_sdu_ue(void *deliver_sdu_data, struct rlc_entity_t *_entity,
                     char *buf, int size)
 {
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   printf("TEST: UE: %"PRIu64": deliver SDU size %d [",
          entity->t_current, size);
   for (int i = 0; i < size; i++) printf(" %2.2x", (unsigned char)buf[i]);
@@ -41,14 +46,16 @@ void deliver_sdu_ue(void *deliver_sdu_data, struct rlc_entity_t *entity,
 }
 
 void successful_delivery_ue(void *successful_delivery_data,
-                            rlc_entity_t *entity, int sdu_id)
+                            rlc_entity_t *_entity, int sdu_id)
 {
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   printf("TEST: UE: %"PRIu64": SDU %d was successfully delivered.\n",
          entity->t_current, sdu_id);
 }
 
-void max_retx_reached_ue(void *max_retx_reached_data, rlc_entity_t *entity)
+void max_retx_reached_ue(void *max_retx_reached_data, rlc_entity_t *_entity)
 {
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   printf("TEST: UE: %"PRIu64", max RETX reached! radio link failure!\n",
          entity->t_current);
 }
@@ -98,8 +105,8 @@ int main(void)
                          35, 0, 45, -1, -1, 4);
 
   for (i = 1; i < 1000; i++) {
-    enb->t_current = i;
-    ue->t_current = i;
+    enb->set_time(enb, i);
+    ue->set_time(ue, i);
 
     if (to_enb[enb_next_packet].size && to_enb[enb_next_packet].time == i) {
       printf("TEST: ENB: %d: recv_sdu (id %d): size %d: [",

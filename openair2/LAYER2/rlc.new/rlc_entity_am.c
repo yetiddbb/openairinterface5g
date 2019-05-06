@@ -256,7 +256,7 @@ static void rlc_am_reception_actions(rlc_entity_am_t *entity,
 
   if (entity->t_reordering_start == 0) {
     if (sn_compare_rx(entity, entity->vr_h, entity->vr_r) > 0) {
-      entity->t_reordering_start = entity->common.t_current;
+      entity->t_reordering_start = entity->t_current;
       entity->vr_x = entity->vr_h;
     }
   }
@@ -294,7 +294,7 @@ static void process_received_ack(rlc_entity_am_t *entity, int sn)
   /* process retransmit list */
   head.next = entity->retransmit_list;
   prev = &head;
-  cur = entity->wait_list;
+  cur = entity->retransmit_list;
   while (cur != NULL) {
     if (sn_compare_tx(entity, cur->sn, sn) < 0) {
       /* dec. retx_count in case we put this segment back in retransmit list
@@ -312,7 +312,7 @@ static void process_received_ack(rlc_entity_am_t *entity, int sn)
       cur = cur->next;
     }
   }
-  entity->wait_list = head.next;
+  entity->retransmit_list = head.next;
 
 }
 
@@ -729,6 +729,12 @@ control:
     goto discard;
   }
 
+  /* 36.322 5.2.2.2 says to stop t_poll_retransmit if a ACK or NACK is
+   * received for the SN 'poll_sn'
+   */
+  if (sn_compare_tx(entity, entity->poll_sn, ack_sn) < 0)
+    entity->t_poll_retransmit_start = 0;
+
   /* at this point, accept the PDU even if the actual values
    * may be incorrect (eg. if so_start > so_end)
    */
@@ -755,6 +761,12 @@ control:
       so_end = -1;
     }
     process_received_nack(entity, nack_sn, so_start, so_end);
+
+    /* 36.322 5.2.2.2 says to stop t_poll_retransmit if a ACK or NACK is
+     * received for the SN 'poll_sn'
+     */
+    if (entity->poll_sn == nack_sn)
+      entity->t_poll_retransmit_start = 0;
   }
 
   finalize_ack_nack_processing(entity);
@@ -971,9 +983,9 @@ static int generate_status(rlc_entity_am_t *entity, char *buffer, int size)
   entity->status_triggered = 0;
 
   /* start t_status_prohibit */
-  entity->t_status_prohibit_start = entity->common.t_current;
+  entity->t_status_prohibit_start = entity->t_current;
 
-  printf("status PDU: ack is %d, buffer: ", ack);
+  printf("send status PDU: ack is %d, buffer: ", ack);
   for (int i = 0; i < encoder.byte; i++) printf(" %2.2x", (unsigned char)buffer[i]);
   printf("\n");
 
@@ -1030,7 +1042,7 @@ void include_poll(rlc_entity_am_t *entity, char *buffer)
   entity->poll_sn = (entity->vt_s + 1023) % 1024;
 
   /* start t_poll_retransmit */
-  entity->t_poll_retransmit_start = entity->common.t_current;
+  entity->t_poll_retransmit_start = entity->t_current;
 }
 
 static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
@@ -1201,7 +1213,7 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
   if (p)
     include_poll(entity, buffer);
 
-  printf("data PDU, size %d: ", pdu_size.header_size + pdu_size.data_size);
+  printf("send data PDU, size %d: ", pdu_size.header_size + pdu_size.data_size);
   for (int i = 0; i < pdu_size.header_size + pdu_size.data_size; i++) printf(" %2.2x", (unsigned char)buffer[i]);
   printf("\n");
 
@@ -1219,7 +1231,7 @@ static int status_to_report(rlc_entity_am_t *entity)
 {
   return entity->status_triggered &&
          (entity->t_status_prohibit_start == 0 ||
-          entity->common.t_current - entity->t_status_prohibit_start >
+          entity->t_current - entity->t_status_prohibit_start >
               entity->t_status_prohibit);
 }
 
@@ -1309,4 +1321,103 @@ void rlc_entity_am_recv_sdu(rlc_entity_t *_entity, char *buffer, int size,
 
   sdu = rlc_new_sdu(buffer, size, sdu_id);
   rlc_sdu_list_add(&entity->tx_list, &entity->tx_end, sdu);
+}
+
+/*************************************************************************/
+/* time/timers                                                           */
+/*************************************************************************/
+
+static void check_t_poll_retransmit(rlc_entity_am_t *entity)
+{
+  rlc_tx_pdu_segment_t head;
+  rlc_tx_pdu_segment_t *cur;
+  rlc_tx_pdu_segment_t *prev;
+  int sn;
+
+  /* 36.322 5.2.2.3 */
+  /* did t_poll_retransmit expire? */
+  if (entity->t_poll_retransmit_start == 0 ||
+      entity->t_current <= entity->t_poll_retransmit_start +
+                               entity->t_poll_retransmit)
+    return;
+
+  printf("%s:%d:%s: warning: t_poll_retransmit expired\n",
+         __FILE__, __LINE__, __FUNCTION__);
+
+  /* do we meet conditions of 36.322 5.2.2.3? */
+  if (!check_poll_after_pdu_assembly(entity))
+    return;
+
+  /* search wait list for PDU with SN = VT(S)-1 */
+  sn = (entity->vt_s + 1023) % 1024;
+
+  head.next = entity->wait_list;
+  cur = entity->wait_list;
+  prev = &head;
+
+  while (cur != NULL) {
+    if (cur->sn == sn)
+      break;
+    prev = cur;
+    cur = cur->next;
+  }
+
+  /* PDU with SN = VT(S)-1 not found?, take the head of wait list */
+  if (cur == NULL) {
+    cur = entity->wait_list;
+    prev = &head;
+    sn = cur->sn;
+  }
+
+  /* 36.322 says "PDU", not "PDU segment", so let's retransmit all
+   * PDU segments with this SN
+   */
+  while (cur != NULL && cur->sn == sn) {
+    prev->next = cur->next;
+    entity->wait_list = head.next;
+    /* put in retransmit list */
+    consider_retransmission(entity, cur);
+    cur = prev->next;
+  }
+}
+
+static void check_t_reordering(rlc_entity_am_t *entity)
+{
+  int sn;
+
+  /* is t_reordering running and if yes has it expired? */
+  if (entity->t_reordering_start == 0 ||
+      entity->t_current <= entity->t_reordering_start + entity->t_reordering)
+    return;
+
+  printf("%s:%d:%s: t_reordering expired\n", __FILE__, __LINE__, __FUNCTION__);
+
+  /* update VR(MS) to first SN >= VR(X) for which not all PDU segments
+   * have been received
+   */
+  sn = entity->vr_x;
+  while (rlc_am_segment_full(entity, sn))
+    sn = (sn + 1) % 1024;
+  entity->vr_ms = sn;
+
+  if (sn_compare_rx(entity, entity->vr_h, entity->vr_ms) > 0) {
+    entity->t_reordering_start = entity->t_current;
+    entity->vr_x = entity->vr_h;
+  }
+
+  /* trigger STATUS report */
+  entity->status_triggered = 1;
+}
+
+void rlc_entity_am_set_time(rlc_entity_t *_entity, uint64_t now)
+{
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
+
+  entity->t_current = now;
+
+  check_t_poll_retransmit(entity);
+
+  check_t_reordering(entity);
+
+  /* t_status_prohibit is handled by generate_status */
 }

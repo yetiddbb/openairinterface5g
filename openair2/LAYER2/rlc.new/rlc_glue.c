@@ -52,7 +52,7 @@ void mac_rlc_data_ind     (
   }
 
   if (rb != NULL) {
-    rb->t_current = rlc_current_time;
+    rb->set_time(rb, rlc_current_time);
     rb->recv_pdu(rb, buffer_pP, tb_sizeP);
   } else {
     printf("%s:%d:%s: fatal: no RB found (channel ID %d)\n",
@@ -93,7 +93,7 @@ tbs_size_t mac_rlc_data_req(
   }
 
   if (rb != NULL) {
-    rb->t_current = rlc_current_time;
+    rb->set_time(rb, rlc_current_time);
     ret = rb->generate_pdu(rb, buffer_pP, ue->saved_status_ind_tb_size[channel_idP - 1]);
   } else {
     printf("%s:%d:%s: fatal: data req for unknown RB\n", __FILE__, __LINE__, __FUNCTION__);
@@ -146,7 +146,7 @@ mac_rlc_status_resp_t mac_rlc_status_ind(
 
   if (rb != NULL) {
     rlc_entity_buffer_status_t buf_stat;
-    rb->t_current = rlc_current_time;
+    rb->set_time(rb, rlc_current_time);
     buf_stat = rb->buffer_status(rb, tb_sizeP ? tb_sizeP : 1000000);
     if (buf_stat.status_size)
       ret.bytes_in_buffer = buf_stat.status_size;
@@ -208,7 +208,7 @@ rlc_op_status_t rlc_data_req     (const protocol_ctxt_t *const ctxt_pP,
   }
 
   if (rb != NULL) {
-    rb->t_current = rlc_current_time;
+    rb->set_time(rb, rlc_current_time);
     rb->recv_sdu(rb, (char *)sdu_pP->data, sdu_sizeP, muiP);
   } else {
     printf("%s:%d:%s: fatal: SDU sent to unknown RB\n", __FILE__, __LINE__, __FUNCTION__);

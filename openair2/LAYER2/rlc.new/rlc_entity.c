@@ -39,6 +39,8 @@ rlc_entity_t *new_rlc_entity_am(
 
   ret->common.recv_sdu         = rlc_entity_am_recv_sdu;
 
+  ret->common.set_time = rlc_entity_am_set_time;
+
   ret->common.deliver_sdu      = deliver_sdu;
   ret->common.deliver_sdu_data = deliver_sdu_data;
 

@@ -223,6 +223,9 @@ typedef struct {
   int pdu_without_poll;
   int byte_without_poll;
 
+  /* set to the latest know time by the user of the module. Unit: ms */
+  uint64_t t_current;
+
   /* timers (stores the TTI of activation, 0 means not active) */
   uint64_t t_reordering_start;
   uint64_t t_status_prohibit_start;
@@ -253,6 +256,7 @@ void rlc_entity_am_recv_sdu(rlc_entity_t *entity, char *buffer, int size,
 void rlc_entity_am_recv_pdu(rlc_entity_t *entity, char *buffer, int size);
 rlc_entity_buffer_status_t rlc_entity_am_buffer_status(
     rlc_entity_t *entity, int maxsize);
-int rlc_entity_am_generate_pdu(struct rlc_entity_t *entity, char *buffer, int size);
+int rlc_entity_am_generate_pdu(rlc_entity_t *entity, char *buffer, int size);
+void rlc_entity_am_set_time(rlc_entity_t *entity, uint64_t now);
 
 #endif /* _RLC_ENTITY_AM_H_ */
