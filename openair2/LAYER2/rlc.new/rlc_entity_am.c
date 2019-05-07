@@ -790,17 +790,17 @@ discard:
 
 static int pdu_size(rlc_entity_am_t *entity, rlc_tx_pdu_segment_t *pdu)
 {
-  int size;
+  int header_size;
   int sdu_count;
   int data_size;
   int li_bits;
   rlc_sdu_t *sdu;
 
-  size = 2;
-  data_size = pdu->data_size;
-
+  header_size = 2;
   if (pdu->is_segment)
-    size += 2;
+    header_size += 2;
+
+  data_size = pdu->data_size;
 
   sdu = pdu->start_sdu;
 
@@ -814,14 +814,15 @@ static int pdu_size(rlc_entity_am_t *entity, rlc_tx_pdu_segment_t *pdu)
     sdu = sdu->next;
   }
 
-  li_bits = 12 * sdu_count;
+  li_bits = 12 * (sdu_count - 1);
+  header_size += (li_bits + 7) / 8;
 
-  return size + (li_bits + 7) / 8;
+  return header_size + pdu->data_size;
 }
 
 static int header_size(int sdu_count)
 {
-  int bits = 16 + 12 * (sdu_count-1);
+  int bits = 16 + 12 * (sdu_count - 1);
   /* padding if we have to */
   return (bits + 7) / 8;
 }
@@ -1045,13 +1046,12 @@ void include_poll(rlc_entity_am_t *entity, char *buffer)
   entity->t_poll_retransmit_start = entity->t_current;
 }
 
-static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
+static int serialize_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize,
+                         rlc_tx_pdu_segment_t *pdu, int p)
 {
-  int                  vt_ms;
-  tx_pdu_size_t        pdu_size;
   int                  first_sdu_full;
   int                  last_sdu_full;
-  rlc_tx_pdu_segment_t *pdu;
+  int                  sdu_next_byte;
   rlc_sdu_t            *sdu;
   int                  i;
   int                  cursize;
@@ -1061,7 +1061,138 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
   int                  li;
   char                 *out;
   int                  outpos;
+  int                  sdu_count;
+  int                  header_size;
+
+  first_sdu_full = pdu->sdu_start_byte == 0;
+
+  /* is last SDU full? (and also compute sdu_count) */
+  last_sdu_full = 1;
+  sdu = pdu->start_sdu;
+  sdu_next_byte = pdu->sdu_start_byte;
+  cursize = 0;
+  sdu_count = 0;
+  while (cursize != pdu->data_size) {
+    int sdu_size = sdu->size - sdu_next_byte;
+    sdu_count++;
+    if (cursize + sdu_size > pdu->data_size) {
+      last_sdu_full = 0;
+      break;
+    }
+    cursize += sdu_size;
+    sdu = sdu->next;
+    sdu_next_byte = 0;
+  }
+
+  /* generate header */
+  rlc_pdu_encoder_init(&encoder, buffer, bufsize);
+
+  rlc_pdu_encoder_put_bits(&encoder, 1, 1);                /* D/C: 1 = data */
+  rlc_pdu_encoder_put_bits(&encoder, pdu->is_segment, 1);             /* RF */
+  rlc_pdu_encoder_put_bits(&encoder, 0, 1);        /* P: reserve, set later */
+
+  fi = 0;
+  if (!first_sdu_full)
+    fi |= 0x02;
+  if (!last_sdu_full)
+    fi |= 0x01;
+  rlc_pdu_encoder_put_bits(&encoder, fi, 2);                          /* FI */
+
+  /* to understand the logic for Es and LIs:
+   * If we have:
+   *   1 SDU:   E=0
+   *
+   *   2 SDUs:  E=1
+   *     then:  E=0 LI(sdu[0])
+   *
+   *   3 SDUs:  E=1
+   *     then:  E=1 LI(sdu[0])
+   *     then:  E=0 LI(sdu[1])
+   *
+   *   4 SDUs:  E=1
+   *     then:  E=1 LI(sdu[0])
+   *     then:  E=1 LI(sdu[1])
+   *     then:  E=0 LI(sdu[2])
+   */
+  if (sdu_count >= 2)
+    e = 1;
+  else
+    e = 0;
+  rlc_pdu_encoder_put_bits(&encoder, e, 1);                            /* E */
+
+  rlc_pdu_encoder_put_bits(&encoder, pdu->sn, 10);                    /* SN */
+
+  if (pdu->is_segment) {
+    rlc_pdu_encoder_put_bits(&encoder, pdu->is_last, 1);             /* LSF */
+    rlc_pdu_encoder_put_bits(&encoder, pdu->so, 15);                  /* SO */
+  }
+
+  /* put LIs */
+  sdu = pdu->start_sdu;
+  /* first SDU */
+  li = sdu->size - pdu->sdu_start_byte;
+  /* put E+LI only if at least 2 SDUs */
+  if (sdu_count >= 2) {
+    /* E is 1 if at least 3 SDUs */
+    if (sdu_count >= 3)
+      e = 1;
+    else
+      e = 0;
+    rlc_pdu_encoder_put_bits(&encoder, e, 1);                          /* E */
+    rlc_pdu_encoder_put_bits(&encoder, li, 11);                       /* LI */
+  }
+  /* next SDUs, but not the last (no LI for the last) */
+  sdu = sdu->next;
+  for (i = 2; i < sdu_count; i++, sdu = sdu->next) {
+    if (i != sdu_count - 1)
+      e = 1;
+    else
+      e = 0;
+    li = sdu->size;
+    rlc_pdu_encoder_put_bits(&encoder, e, 1);                          /* E */
+    rlc_pdu_encoder_put_bits(&encoder, li, 11);                       /* LI */
+  }
+
+  rlc_pdu_encoder_align(&encoder);
+
+  header_size = encoder.byte;
+
+  /* generate data */
+  out = buffer + header_size;
+  sdu = pdu->start_sdu;
+  /* first SDU */
+  li = sdu->size - pdu->sdu_start_byte;
+  memcpy(out, sdu->data + pdu->sdu_start_byte, li);
+  outpos = li;
+  /* next SDUs */
+  sdu = sdu->next;
+  for (i = 1; i < sdu_count; i++, sdu = sdu->next) {
+    li = sdu->size;
+    if (outpos + li >= pdu->data_size)
+      li = pdu->data_size - outpos;
+    memcpy(out+outpos, sdu->data, li);
+    outpos += li;
+  }
+
+  if (p)
+    include_poll(entity, buffer);
+
+  printf("send data PDU, size %d: ", header_size + pdu->data_size);
+  for (int i = 0; i < header_size + pdu->data_size; i++) printf(" %2.2x", (unsigned char)buffer[i]);
+  printf("\n");
+
+  return header_size + pdu->data_size;
+}
+
+static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
+{
+  int                  vt_ms;
+  tx_pdu_size_t        pdu_size;
+  rlc_sdu_t            *sdu;
+  int                  i;
+  int                  cursize;
   int                  p;
+  rlc_tx_pdu_segment_t *pdu;
 
   /* sn out of window? do nothing */
   vt_ms = (entity->vt_a + 512) % 1024;
@@ -1085,8 +1216,6 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
 
   pdu->start_sdu = sdu;
 
-  first_sdu_full = sdu->next_byte == 0;
-
   pdu->sdu_start_byte = sdu->next_byte;
 
   pdu->so = 0;
@@ -1100,101 +1229,15 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
 
   /* reserve SDU bytes */
   cursize = 0;
-  last_sdu_full = 1;
   for (i = 0; i < pdu_size.sdu_count; i++, sdu = sdu->next) {
     int sdu_size = sdu->size - sdu->next_byte;
-    if (cursize + sdu_size > pdu_size.data_size) {
+    if (cursize + sdu_size > pdu_size.data_size)
       sdu_size = pdu_size.data_size - cursize;
-      last_sdu_full = 0;
-    }
     sdu->next_byte += sdu_size;
     cursize += sdu_size;
   }
 
   pdu->data_size = cursize;
-
-  /* generate header */
-  rlc_pdu_encoder_init(&encoder, buffer, bufsize);
-
-  rlc_pdu_encoder_put_bits(&encoder, 1, 1);         /* D/C: 1 = data */
-  rlc_pdu_encoder_put_bits(&encoder, 0, 1);         /* RF: 0 = PDU */
-  rlc_pdu_encoder_put_bits(&encoder, 0, 1);         /* P: reserve, set later */
-
-  fi = 0;
-  if (!first_sdu_full)
-    fi |= 0x02;
-  if (!last_sdu_full)
-    fi |= 0x01;
-  rlc_pdu_encoder_put_bits(&encoder, fi, 2);        /* FI */
-
-  /* to understand the logic for Es and LIs:
-   * If we have:
-   *   1 SDU:   E=0
-   *
-   *   2 SDUs:  E=1
-   *     then:  E=0 LI(sdu[0])
-   *
-   *   3 SDUs:  E=1
-   *     then:  E=1 LI(sdu[0])
-   *     then:  E=0 LI(sdu[1])
-   *
-   *   4 SDUs:  E=1
-   *     then:  E=1 LI(sdu[0])
-   *     then:  E=1 LI(sdu[1])
-   *     then:  E=0 LI(sdu[2])
-   */
-  if (pdu_size.sdu_count >= 2)
-    e = 1;
-  else
-    e = 0;
-  rlc_pdu_encoder_put_bits(&encoder, e, 1);         /* E */
-
-  rlc_pdu_encoder_put_bits(&encoder, pdu->sn, 10);  /* SN */
-
-  /* put LIs */
-  sdu = pdu->start_sdu;
-  /* first SDU */
-  li = sdu->size - pdu->sdu_start_byte;
-  /* put E+LI only if at least 2 SDUs */
-  if (pdu_size.sdu_count >= 2) {
-    /* E is 1 if at least 3 SDUs */
-    if (pdu_size.sdu_count >= 3)
-      e = 1;
-    else
-      e = 0;
-    rlc_pdu_encoder_put_bits(&encoder, e, 1);       /* E */
-    rlc_pdu_encoder_put_bits(&encoder, li, 11);     /* LI */
-  }
-  /* next SDUs, but not the last (no LI for the last) */
-  sdu = sdu->next;
-  for (i = 2; i < pdu_size.sdu_count; i++, sdu = sdu->next) {
-    if (i != pdu_size.sdu_count - 1)
-      e = 1;
-    else
-      e = 0;
-    li = sdu->size;
-    rlc_pdu_encoder_put_bits(&encoder, e, 1);       /* E */
-    rlc_pdu_encoder_put_bits(&encoder, li, 11);     /* LI */
-  }
-
-  rlc_pdu_encoder_align(&encoder);
-
-  /* generate data */
-  out = buffer + encoder.byte;
-  sdu = pdu->start_sdu;
-  /* first SDU */
-  li = sdu->size - pdu->sdu_start_byte;
-  memcpy(out, sdu->data + pdu->sdu_start_byte, li);
-  outpos = li;
-  /* next SDUs */
-  sdu = sdu->next;
-  for (i = 1; i < pdu_size.sdu_count; i++, sdu = sdu->next) {
-    li = sdu->size;
-    if (outpos + li >= pdu_size.data_size)
-      li = pdu_size.data_size - outpos;
-    memcpy(out+outpos, sdu->data, li);
-    outpos += li;
-  }
 
   /* put PDU at the end of the wait list */
   entity->wait_list = rlc_tx_pdu_list_append(entity->wait_list, pdu);
@@ -1210,21 +1253,77 @@ static int generate_tx_pdu(rlc_entity_am_t *entity, char *buffer, int bufsize)
   else
     p = check_poll_after_pdu_assembly(entity);
 
-  if (p)
-    include_poll(entity, buffer);
+  return serialize_pdu(entity, buffer, bufsize, pdu, p);
+}
 
-  printf("send data PDU, size %d: ", pdu_size.header_size + pdu_size.data_size);
-  for (int i = 0; i < pdu_size.header_size + pdu_size.data_size; i++) printf(" %2.2x", (unsigned char)buffer[i]);
-  printf("\n");
+static void resegment(rlc_tx_pdu_segment_t *pdu, int size)
+{
+  rlc_tx_pdu_segment_t *new_pdu;
+  rlc_sdu_t *sdu;
+  int sdu_count;
+  int pdu_header_size;
+  int pdu_data_size;
+  int sdu_pos;
+  int sdu_bytes_to_take;
 
-  return pdu_size.header_size + pdu_size.data_size;
+  /* PDU segment too big, cut in two parts so that first part fits into
+   * size bytes (including header)
+   */
+  sdu = pdu->start_sdu;
+  pdu_header_size = 0;
+  pdu_data_size = 0;
+  sdu_pos = pdu->sdu_start_byte;
+  sdu_count = 0;
+  while (pdu_header_size + pdu_data_size != size) {
+    sdu_count++;
+    /* header has 2 more bytes for SO */
+    pdu_header_size = 2 + header_size(sdu_count);
+    sdu_bytes_to_take = sdu->size - sdu_pos;
+    if (pdu_header_size + pdu_data_size + sdu_bytes_to_take > size) {
+      sdu_bytes_to_take = size - (pdu_header_size + pdu_data_size);
+    }
+    sdu_pos += sdu_bytes_to_take;
+    if (sdu_pos == sdu->size) {
+      sdu = sdu->next;
+      sdu_pos = 0;
+    }
+    pdu_data_size += sdu_bytes_to_take;
+  }
+
+  new_pdu = rlc_tx_new_pdu();
+  pdu->is_segment = 1;
+  *new_pdu = *pdu;
+
+  new_pdu->so = pdu->so + pdu_data_size;
+  new_pdu->data_size = pdu->data_size - pdu_data_size;
+  new_pdu->start_sdu = sdu;
+  new_pdu->sdu_start_byte = sdu_pos;
+
+  pdu->is_last = 0;
+  pdu->data_size = pdu_data_size;
+  pdu->next = new_pdu;
 }
 
 static int generate_retx_pdu(rlc_entity_am_t *entity, char *buffer, int size)
 {
-  printf("%s:%d:%s: todo\n", __FILE__, __LINE__, __FUNCTION__);
-  exit(1);
-  return 0;
+  rlc_tx_pdu_segment_t *pdu;
+  int orig_size;
+  int p;
+
+  pdu = entity->retransmit_list;
+  orig_size = pdu_size(entity, pdu);
+
+  if (orig_size > size)
+    resegment(pdu, size);
+
+  /* remove from retransmit list and put in wait list */
+  entity->retransmit_list = pdu->next;
+  entity->wait_list = rlc_tx_pdu_list_add(sn_compare_tx, entity,
+                                          entity->wait_list, pdu);
+
+  p = check_poll_after_pdu_assembly(entity);
+
+  return serialize_pdu(entity, buffer, orig_size, pdu, p);
 }
 
 static int status_to_report(rlc_entity_am_t *entity)
