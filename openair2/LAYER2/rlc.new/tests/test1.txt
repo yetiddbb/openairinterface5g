@@ -1,10 +1,10 @@
-TEST: ENB: 1: recv_sdu (id 0): size 10: [ 01 02 03 04 05 06 07 08 09 0a]
-TEST: ENB: 1: generate_pdu: size 12: [ a0 00 01 02 03 04 05 06 07 08 09 0a]
-TEST: UE: 1: deliver SDU size 10 [ 01 02 03 04 05 06 07 08 09 0a]
+TEST: ENB: 1: recv_sdu (id 0): size 10: [ 00 01 02 03 04 05 06 07 08 09]
+TEST: ENB: 1: generate_pdu: size 12: [ a0 00 00 01 02 03 04 05 06 07 08 09]
+TEST: UE: 1: deliver SDU size 10 [ 00 01 02 03 04 05 06 07 08 09]
 TEST: UE: 1: generate_pdu: size 2: [ 00 04]
 TEST: ENB: 1: SDU 0 was successfully delivered.
-TEST: UE: 10: recv_sdu (id 0): size 5: [ 05 04 03 02 01]
-TEST: UE: 10: generate_pdu: size 7: [ a0 00 05 04 03 02 01]
-TEST: ENB: 10: deliver SDU size 5 [ 05 04 03 02 01]
+TEST: UE: 10: recv_sdu (id 0): size 5: [ 00 01 02 03 04]
+TEST: UE: 10: generate_pdu: size 7: [ a0 00 00 01 02 03 04]
+TEST: ENB: 10: deliver SDU size 5 [ 00 01 02 03 04]
 TEST: ENB: 11: generate_pdu: size 2: [ 00 04]
 TEST: UE: 11: SDU 0 was successfully delivered.

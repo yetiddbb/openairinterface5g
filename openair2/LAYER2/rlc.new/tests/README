@@ -1,13 +1,26 @@
 To run tests, simply type: make
 
 Each test is made of:
-  test.c      program of the test
-  test.txt    expected output of the test
+  testXX.h      definition of the test
+  testXX.txt    expected output of the test
 
 At runtime, we generate:
-  test.run    actual output of the test
+  testXX.run    actual output of the test
 
-Only the output lines starting with "TEST" are taken into account.
+test.c is the test driving program.
 
-The Makefile stops on the first actual output differing from the
-expected output.
+Only the output lines of the test program starting with "TEST" are
+stored into testXX.txt and testXX.run.
+
+A test is considered a success if testXX.txt and testXX.run are equal.
+
+Only failed tests are reported.
+
+To define a new test, use the number YY that is XX of max test + 1.
+This is also the value 'test_count' + 1 with 'test_count' defined is
+run_tests.sh.
+Create the file testYY.h containing the test, then generate testYY.run
+by running 'make all TEST=testYY' and copy testYY.run to testYY.txt. Be
+sure that the output is correct.
+
+The available instructions for a test are described at the top of test.c.

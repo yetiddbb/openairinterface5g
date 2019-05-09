@@ -1,23 +1,28 @@
 CC=gcc
-CFLAGS=-Wall -g -I..
+CFLAGS=-Wall -g --coverage
 
-LIB=../rlc_entity.o ../rlc_entity_am.o ../rlc_pdu.o ../rlc_sdu.o
+LIB=rlc_entity.o rlc_entity_am.o rlc_pdu.o rlc_sdu.o
 
-all: clean_run test1.run
+tests:
+	@./run_tests.sh
 
-%.run: %
-	./$< | grep ^TEST > $<.run
-	diff -q $<.txt $<.run
+all: clean_run $(TEST).run
 
-test1: test1.o $(LIB)
+%.run: test
+	./test | grep ^TEST > $(TEST).run
+	diff -q $(TEST).txt $(TEST).run
+
+test: test.o $(LIB)
 	$(CC) $(CFLAGS) -o $@ $^
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+%.o: ../%.c
+	$(CC) $(CFLAGS) -I.. -c -o $@ $<
+
+test.o: test.c
+	$(CC) $(CFLAGS) -c -o $@ $< -DTEST='"$(TEST).h"'
 
 clean_run:
-	rm -f *.run
+	rm -f $(TEST).run test test.o
 
 clean:
-	rm -f *.o test1 *.run
-	cd .. && make clean
+	rm -f *.o test *.run *.gcov *.gcda *.gcno
