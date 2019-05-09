@@ -41,6 +41,10 @@ rlc_entity_t *new_rlc_entity_am(
 
   ret->common.set_time = rlc_entity_am_set_time;
 
+  ret->common.discard_sdu = rlc_entity_am_discard_sdu;
+
+  ret->common.reestablishment = rlc_entity_am_reestablishment;
+
   ret->common.deliver_sdu      = deliver_sdu;
   ret->common.deliver_sdu_data = deliver_sdu_data;
 

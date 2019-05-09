@@ -21,6 +21,10 @@ typedef struct rlc_entity_t {
 
   void (*set_time)(struct rlc_entity_t *entity, uint64_t now);
 
+  void (*discard_sdu)(struct rlc_entity_t *entity, int sdu_id);
+
+  void (*reestablishment)(struct rlc_entity_t *entity);
+
   /* callbacks provided to the RLC module */
   void (*deliver_sdu)(void *deliver_sdu_data, struct rlc_entity_t *entity,
                       char *buf, int size);

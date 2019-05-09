@@ -1520,3 +1520,109 @@ void rlc_entity_am_set_time(rlc_entity_t *_entity, uint64_t now)
 
   /* t_status_prohibit is handled by generate_status */
 }
+
+void rlc_entity_am_discard_sdu(rlc_entity_t *_entity, int sdu_id)
+{
+  /* implements 36.322 5.3 */
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
+  rlc_sdu_t head;
+  rlc_sdu_t *cur;
+  rlc_sdu_t *prev;
+
+  head.next = entity->tx_list;
+  cur = entity->tx_list;
+  prev = &head;
+
+  while (cur != NULL && cur->upper_layer_id != sdu_id) {
+    prev = cur;
+    cur = cur->next;
+  }
+
+  /* if sdu_id not found or some bytes have already been 'PDU-ized'
+   * then do nothing
+   */
+  if (cur == NULL || cur->next_byte != 0)
+    return;
+
+  /* remove SDU from tx_list */
+  prev->next = cur->next;
+  entity->tx_list = head.next;
+  if (entity->tx_end == cur) {
+    if (prev != &head)
+      entity->tx_end = prev;
+    else
+      entity->tx_end = NULL;
+  }
+
+  rlc_free_sdu(cur);
+}
+
+static void free_pdu_segment_list(rlc_tx_pdu_segment_t *l)
+{
+  rlc_tx_pdu_segment_t *cur;
+
+  while (l != NULL) {
+    cur = l;
+    l = l->next;
+    rlc_tx_free_pdu(cur);
+  }
+}
+
+void rlc_entity_am_reestablishment(rlc_entity_t *_entity)
+{
+  rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
+  rlc_rx_pdu_segment_t *cur_rx;
+  rlc_sdu_t            *cur_tx;
+
+  /* 36.322 5.4 says to deliver SDUs if possible.
+   * Let's not do that, it makes the code simpler.
+   * TODO: change this behavior if wanted/needed.
+   */
+
+  entity->vr_r = 0;
+  entity->vr_x = 0;
+  entity->vr_ms = 0;
+  entity->vr_h = 0;
+
+  entity->status_triggered = 0;
+
+  entity->vt_a = 0;
+  entity->vt_s = 0;
+  entity->poll_sn = 0;
+  entity->pdu_without_poll = 0;
+  entity->byte_without_poll = 0;
+
+  entity->t_current = 0;
+
+  entity->t_reordering_start = 0;
+  entity->t_status_prohibit_start = 0;
+  entity->t_poll_retransmit_start = 0;
+
+  cur_rx = entity->rx_list;
+  while (cur_rx != NULL) {
+    rlc_rx_pdu_segment_t *p = cur_rx;
+    cur_rx = cur_rx->next;
+    rlc_rx_free_pdu_segment(p);
+  }
+  entity->rx_list = NULL;
+  entity->rx_size = 0;
+
+  memset(&entity->reassemble, 0, sizeof(rlc_am_reassemble_t));
+
+  cur_tx = entity->tx_list;
+  while (cur_tx != NULL) {
+    rlc_sdu_t *p = cur_tx;
+    cur_tx = cur_tx->next;
+    rlc_free_sdu(p);
+  }
+  entity->tx_list = NULL;
+  entity->tx_end = NULL;
+  entity->tx_size = 0;
+
+  free_pdu_segment_list(entity->wait_list);
+  free_pdu_segment_list(entity->retransmit_list);
+  free_pdu_segment_list(entity->ack_list);
+  entity->wait_list = NULL;
+  entity->retransmit_list = NULL;
+  entity->ack_list = NULL;
+}
