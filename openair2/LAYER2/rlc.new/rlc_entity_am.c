@@ -528,21 +528,19 @@ static void finalize_ack_nack_processing(rlc_entity_am_t *entity)
   if (cur == NULL)
     return;
 
-  /* remove full PDUs in ack list and ack SDU bytes they cover */
-  while (cur != NULL) {
+  /* Remove full PDUs and ack the SDU bytes they cover. Start from SN == VT(A)
+   * and process increasing SNs until end of list or missing ACK or PDU not
+   * fully ACKed.
+   */
+  while (cur != NULL && cur->sn == entity->vt_a &&
+         tx_pdu_in_ack_list_full(cur)) {
     sn = cur->sn;
-    if (tx_pdu_in_ack_list_full(cur)) {
-      if (cur->sn == entity->vt_a)
-        entity->vt_a = (entity->vt_a + 1) % 1024;
-      pdu_size = tx_pdu_in_ack_list_size(cur);
-      ack_sdu_bytes(cur->start_sdu, cur->sdu_start_byte, pdu_size);
-      while (cur != NULL && cur->sn == sn)
-        cur = cur->next;
-      entity->ack_list = tx_list_remove_sn(entity->ack_list, sn);
-    } else {
-      while (cur != NULL && cur->sn == sn)
-        cur = cur->next;
-    }
+    entity->vt_a = (entity->vt_a + 1) % 1024;
+    pdu_size = tx_pdu_in_ack_list_size(cur);
+    ack_sdu_bytes(cur->start_sdu, cur->sdu_start_byte, pdu_size);
+    while (cur != NULL && cur->sn == sn)
+      cur = cur->next;
+    entity->ack_list = tx_list_remove_sn(entity->ack_list, sn);
   }
 
   cleanup_sdu_list(entity);
