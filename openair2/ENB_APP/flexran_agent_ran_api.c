@@ -1434,6 +1434,19 @@ uint32_t flexran_get_pdcp_rx_oo(mid_t mod_id, uint16_t uid, lcid_t lcid)
 }
 
 /******************** RRC *****************************/
+/* RRC Wrappers */
+int flexran_call_rrc_reconfiguration (mid_t mod_id, rnti_t rnti) {
+  if (!rrc_is_present(mod_id)) return -1;
+  protocol_ctxt_t  ctxt;
+  memset(&ctxt, 0, sizeof(ctxt));
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  PROTOCOL_CTXT_SET_BY_MODULE_ID(&ctxt, mod_id, ENB_FLAG_YES, ue_context_p->ue_context.rnti, flexran_get_current_frame(mod_id), flexran_get_current_subframe (mod_id), mod_id);
+  flexran_rrc_eNB_generate_defaultRRCConnectionReconfiguration(&ctxt, ue_context_p, 0);
+  return 0;
+}
+
+/* RRC Getters */
 
 LTE_MeasId_t  flexran_get_rrc_pcell_measid(mid_t mod_id, rnti_t rnti) {
   if (!rrc_is_present(mod_id)) return -1;
@@ -1565,6 +1578,8 @@ float flexran_get_rrc_neigh_rsrq(mid_t mod_id, rnti_t rnti, long cell_id) {
   return RSRQ_meas_mapping[*(ue_context_p->ue_context.measResults->measResultNeighCells->choice.measResultListEUTRA.list.array[cell_id]->measResult.rsrqResult)];
 }
 
+/* Measurement offsets */
+
 long flexran_get_rrc_ofp(mid_t mod_id, rnti_t rnti) {
   if (!rrc_is_present(mod_id)) return -1;
   struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
@@ -1675,6 +1690,134 @@ int flexran_get_rrc_a3_event_reportOnLeave(mid_t mod_id, rnti_t rnti) {
   if (!ue_context_p->ue_context.measurement_info->events) return -1;
   if (!ue_context_p->ue_context.measurement_info->events->a3_event) return -1;
   return ue_context_p->ue_context.measurement_info->events->a3_event->reportOnLeave;
+}
+
+/* RRC Setters */
+
+/* Measurement offsets */
+
+int flexran_set_rrc_ofp(mid_t mod_id, rnti_t rnti, long offsetFreq) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  ue_context_p->ue_context.measurement_info->offsetFreq = offsetFreq;
+  return 0;
+}
+
+int flexran_set_rrc_ofn(mid_t mod_id, rnti_t rnti, long offsetFreq) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  ue_context_p->ue_context.measurement_info->offsetFreq = offsetFreq;
+  return 0;
+}
+
+int flexran_set_rrc_ocp(mid_t mod_id, rnti_t rnti, long cellIndividualOffset) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  ue_context_p->ue_context.measurement_info->cellIndividualOffset[0] = cellIndividualOffset;
+  return 0;
+}
+
+int flexran_set_rrc_ocn(mid_t mod_id, rnti_t rnti, long cell_id, long cellIndividualOffset) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  ue_context_p->ue_context.measurement_info->cellIndividualOffset[cell_id+1] = cellIndividualOffset;
+  return 0;
+}
+
+int flexran_set_filter_coeff_rsrp(mid_t mod_id, rnti_t rnti, long filterCoefficientRSRP) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  ue_context_p->ue_context.measurement_info->filterCoefficientRSRP = filterCoefficientRSRP;
+  return 0;
+}
+
+int flexran_set_filter_coeff_rsrq(mid_t mod_id, rnti_t rnti, long filterCoefficientRSRQ) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  ue_context_p->ue_context.measurement_info->filterCoefficientRSRQ = filterCoefficientRSRQ;
+  return 0;
+}
+
+/* Periodic event */
+
+int flexran_set_rrc_per_event_maxReportCells(mid_t mod_id, rnti_t rnti, long maxReportCells) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events->per_event) return -1;
+  ue_context_p->ue_context.measurement_info->events->per_event->maxReportCells = maxReportCells;
+  return 0;
+}
+
+/* A3 event */
+
+int flexran_set_rrc_a3_event_hysteresis(mid_t mod_id, rnti_t rnti, long hysteresis) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events->a3_event) return -1;
+  ue_context_p->ue_context.measurement_info->events->a3_event->hysteresis = hysteresis;
+  return 0;
+}
+
+int flexran_set_rrc_a3_event_timeToTrigger(mid_t mod_id, rnti_t rnti, long timeToTrigger) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events->a3_event) return -1;
+  ue_context_p->ue_context.measurement_info->events->a3_event->timeToTrigger = timeToTrigger;
+  return 0;
+}
+
+int flexran_set_rrc_a3_event_maxReportCells(mid_t mod_id, rnti_t rnti, long maxReportCells) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events->a3_event) return -1;
+  ue_context_p->ue_context.measurement_info->events->a3_event->maxReportCells = maxReportCells;
+  return 0;
+}
+
+int flexran_set_rrc_a3_event_a3_offset(mid_t mod_id, rnti_t rnti, long a3_offset) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events->a3_event) return -1;
+  ue_context_p->ue_context.measurement_info->events->a3_event->a3_offset = a3_offset;
+  return 0;
+}
+
+int flexran_set_rrc_a3_event_reportOnLeave(mid_t mod_id, rnti_t rnti, int reportOnLeave) {
+  if (!rrc_is_present(mod_id)) return -1;
+  struct rrc_eNB_ue_context_s* ue_context_p = rrc_eNB_get_ue_context(RC.rrc[mod_id], rnti);
+  if (!ue_context_p) return -1;
+  if (!ue_context_p->ue_context.measurement_info) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events) return -1;
+  if (!ue_context_p->ue_context.measurement_info->events->a3_event) return -1;
+  ue_context_p->ue_context.measurement_info->events->a3_event->reportOnLeave = reportOnLeave;
+  return 0;
 }
 
 uint8_t flexran_get_rrc_num_plmn_ids(mid_t mod_id) {
