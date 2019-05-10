@@ -742,7 +742,7 @@ class SSHConnection():
 				#print('current directory: ' + os.getcwd())
 				#self.command('pwd', '\$', 4)
 				#print('self.command pwd: ' + str(self.ssh.before))
-				self.command('stdbuf -o0 cat ' + self.eNBLogFile + ' | egrep --text --color=never -i "wait|sync"', '\$', 4)
+				self.command('stdbuf -o0 cat ' + self.eNBLogFile + ' | egrep --text --color=never -i "wait|sync"', '\$', 10)
 				#print(self.ssh.before)
 				result = re.search('got sync', str(self.ssh.before))
 				if result is None:
