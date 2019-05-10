@@ -554,7 +554,7 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   rlc_entity_am_t *entity = (rlc_entity_am_t *)_entity;
   rlc_pdu_decoder_t decoder;
   rlc_pdu_decoder_t data_decoder;
-  rlc_pdu_decoder_t so_decoder;
+  rlc_pdu_decoder_t control_decoder;
 
   int dc;
   int rf;
@@ -573,9 +573,8 @@ void rlc_entity_am_recv_pdu(rlc_entity_t *_entity, char *buffer, int size)
   int nack_sn;
   int so_start;
   int so_end;
-  int so_e1;
-  int so_e2;
-  int so_count;
+  int control_e1;
+  int control_e2;
 
   int data_e;
   int data_li;
@@ -711,22 +710,17 @@ control:
   ack_sn = rlc_pdu_decoder_get_bits(&decoder, 10); R(decoder);
   e1 = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
 
-  /* let's go to start of so_start/so_end part */
-  so_decoder = decoder;
-  so_e1 = e1;
-  so_count = 0;
-  while (so_e1) {
-    rlc_pdu_decoder_get_bits(&so_decoder, 10); R(so_decoder);  /* NACK_SN */
-    so_e1 = rlc_pdu_decoder_get_bits(&so_decoder, 1); R(so_decoder);
-    so_e2 = rlc_pdu_decoder_get_bits(&so_decoder, 1); R(so_decoder);
-    if (so_e2)
-      so_count++;
-  }
-  /* discard PDU if wanted so start/end data is not fully present */
-  if (so_count * 30 > size * 8 - so_decoder.byte * 8 - so_decoder.bit) {
-    printf("%s:%d:%s: warning: discard PDU, bad so start/end\n",
-           __FILE__, __LINE__, __FUNCTION__);
-    goto discard;
+  /* let's try to parse the control PDU once to check consistency */
+  control_decoder = decoder;
+  control_e1 = e1;
+  while (control_e1) {
+    rlc_pdu_decoder_get_bits(&control_decoder, 10); R(control_decoder); /* NACK_SN */
+    control_e1 = rlc_pdu_decoder_get_bits(&control_decoder, 1); R(control_decoder);
+    control_e2 = rlc_pdu_decoder_get_bits(&control_decoder, 1); R(control_decoder);
+    if (control_e2) {
+      rlc_pdu_decoder_get_bits(&control_decoder, 15); R(control_decoder); /* SOstart */
+      rlc_pdu_decoder_get_bits(&control_decoder, 15); R(control_decoder); /* SOend */
+    }
   }
 
   /* 36.322 5.2.2.2 says to stop t_poll_retransmit if a ACK or NACK is
@@ -745,8 +739,8 @@ control:
     e1 = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
     e2 = rlc_pdu_decoder_get_bits(&decoder, 1); R(decoder);
     if (e2) {
-      so_start = rlc_pdu_decoder_get_bits(&so_decoder, 15); R(so_decoder);
-      so_end = rlc_pdu_decoder_get_bits(&so_decoder, 15); R(so_decoder);
+      so_start = rlc_pdu_decoder_get_bits(&decoder, 15); R(decoder);
+      so_end = rlc_pdu_decoder_get_bits(&decoder, 15); R(decoder);
       if (so_end < so_start) {
         printf("%s:%d:%s: warning, bad so start/end, NACK the whole PDU (sn %d)\n",
                __FILE__, __LINE__, __FUNCTION__, nack_sn);
